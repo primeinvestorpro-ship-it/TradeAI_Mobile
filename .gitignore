@@ -23,6 +23,13 @@ android/*.apk
 android-app/
 *.idsig
 
+# Flutter build outputs & pub cache
+.pub-cache/
+tradeai_app/build/
+tradeai_app/.dart_tool/
+tradeai_app/.flutter-plugins
+tradeai_app/.flutter-plugins-dependencies
+
 # OS / Editor temporary files
 .DS_Store
 Thumbs.db
