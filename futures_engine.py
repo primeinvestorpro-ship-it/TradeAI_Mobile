@@ -30,8 +30,38 @@ MARKET_OPEN_TIME = datetime.time(9, 15)
 
 
 def load_settings(path="settings.json"):
-    with open(path, "r") as f:
-        return json.load(f)
+    settings = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                settings = json.load(f)
+        except Exception:
+            settings = {}
+    elif os.path.exists("settings.example.json"):
+        try:
+            with open("settings.example.json", "r") as f:
+                settings = json.load(f)
+        except Exception:
+            settings = {}
+
+    env_keys = {
+        "KITE_API_KEY": "kite_api_key",
+        "KITE_API_SECRET": "kite_api_secret",
+        "GEMINI_API_KEY": "gemini_api_key",
+        "GEMINI_MODEL": "gemini_model",
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "CLAUDE_MODEL": "claude_model",
+        "AI_PROVIDER": "ai_provider",
+    }
+    for env_var, key in env_keys.items():
+        v = os.environ.get(env_var)
+        if v:
+            settings[key] = v.strip()
+
+    if os.environ.get("DRY_RUN") is not None:
+        settings["dry_run"] = os.environ.get("DRY_RUN", "").lower() in ("true", "1", "yes")
+
+    return settings
 
 
 def _emit(on_event, payload):
