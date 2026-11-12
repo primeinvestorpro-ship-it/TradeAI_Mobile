@@ -20,6 +20,7 @@ android/res.zip
 android/*.keystore
 android/*.dex
 android/*.apk
+android-app/
 *.idsig
 
 # OS / Editor temporary files

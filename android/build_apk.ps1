@@ -23,7 +23,7 @@ Write-Host "Compiling resources..." -ForegroundColor Yellow
 
 # 3. Link resources and generate R.java
 Write-Host "Linking resources and generating R.java..." -ForegroundColor Yellow
-& "$buildTools\aapt2.exe" link -I "$androidJar" --manifest "AndroidManifest.xml" -o "bin\app-unaligned.apk" "bin\res.zip" --java "src"
+& "$buildTools\aapt2.exe" link -I "$androidJar" --manifest "AndroidManifest.xml" --min-sdk-version 26 --target-sdk-version 34 --version-code 1 --version-name "1.0.0" -o "bin\app-unaligned.apk" "bin\res.zip" --java "src"
 
 # 4. Compile Java sources
 Write-Host "Compiling Java sources..." -ForegroundColor Yellow
@@ -45,19 +45,19 @@ Pop-Location
 Write-Host "Zipaligning APK..." -ForegroundColor Yellow
 & "$buildTools\zipalign.exe" -p -f 4 "bin\app-unaligned.apk" "bin\TradeAI-aligned.apk"
 
-# 8. Generate release signing key if needed
-$keystorePath = "bin\tradeai.keystore"
+# 8. Generate standard debug signing key (accepted by all Android devices for sideloading)
+$keystorePath = "bin\debug.keystore"
 if (-not (Test-Path $keystorePath)) {
-    Write-Host "Generating signing keystore..." -ForegroundColor Yellow
-    & keytool -genkeypair -keystore "$keystorePath" -storepass "tradeai123" -keypass "tradeai123" -alias "tradeai" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=TradeAI, OU=Trading, O=TradeAI, L=Bangalore, ST=KA, C=IN"
+    Write-Host "Generating standard debug keystore..." -ForegroundColor Yellow
+    & keytool -genkeypair -v -keystore "$keystorePath" -storepass "android" -keypass "android" -alias "androiddebugkey" -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
 }
 
 # 9. Sign APK with apksigner (v1 + v2 + v3 scheme)
 $outApk = "$scriptDir\..\TradeAI.apk"
 $staticApk = "$scriptDir\..\static\TradeAI.apk"
 
-Write-Host "Signing APK with apksigner..." -ForegroundColor Yellow
-& "$buildTools\apksigner.bat" sign --ks "$keystorePath" --ks-pass "pass:tradeai123" --key-pass "pass:tradeai123" --ks-key-alias "tradeai" --out "$outApk" "bin\TradeAI-aligned.apk"
+Write-Host "Signing APK with apksigner (v1 + v2 + v3 enabled)..." -ForegroundColor Yellow
+& "$buildTools\apksigner.bat" sign --ks "$keystorePath" --ks-pass "pass:android" --key-pass "pass:android" --ks-key-alias "androiddebugkey" --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true --out "$outApk" "bin\TradeAI-aligned.apk"
 
 # Also copy to static folder for direct in-browser download
 Copy-Item "$outApk" "$staticApk" -Force
