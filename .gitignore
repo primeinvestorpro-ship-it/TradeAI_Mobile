@@ -1,0 +1,31 @@
+# Byte-compiled / cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Local sensitive configuration and tokens
+token.json
+settings.json
+.env
+
+# Analysis reports generated during operation
+reports/*.md
+!reports/.gitkeep
+
+# Android build outputs and keystores
+android/bin/
+android/res.zip
+android/*.keystore
+android/*.dex
+android/*.apk
+*.idsig
+
+# OS / Editor temporary files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.bak

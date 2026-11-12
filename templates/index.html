@@ -1,0 +1,1078 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TradeAI — NSE Futures & Options Analysis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@300;400;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css?v=2.8" />
+</head>
+<body>
+  <!-- Top bar -->
+    <!-- TradeAI Gradient Header -->
+  <header class="argon-header">
+    <div class="argon-header-top">
+      <div class="argon-header-left">
+        <div class="argon-brand-wrap">
+          <span class="argon-atom-icon">⚛</span>
+          <span class="argon-brand-title">TradeAI</span>
+          <span class="argon-brand-divider">|</span>
+          <span class="argon-brand-sub">StockEdge Options</span>
+        </div>
+        <div class="argon-breadcrumbs">
+          <span class="argon-crumb-root">Default</span>
+          <span class="argon-crumb-icon">⌂</span>
+          <span class="argon-crumb-path">Dashboards</span>
+          <span class="argon-crumb-sep">/</span>
+          <span class="argon-crumb-current">NSE F&amp;O Analysis</span>
+        </div>
+      </div>
+
+      <div class="argon-header-center">
+        <div class="ticker-search-container" id="tickerSearchContainer">
+          <div class="ticker-input-wrap argon-search-pill">
+            <span class="argon-search-icon">🔍</span>
+            <input id="tickerInput" type="text" placeholder="Search NSE F&amp;O ticker (e.g. RELIANCE)..." maxlength="20"
+                   autocomplete="off" value="{{ settings.ticker or 'RELIANCE' }}" />
+            <button id="btnAnalyze" class="btn btn-argon-pill" {% if not configured %}disabled title="Configure settings first"{% endif %}>
+              Analyze
+            </button>
+          </div>
+          <!-- Selectable Futures Dropdown -->
+          <div id="tickerDropdown" class="ticker-dropdown hidden"></div>
+        </div>
+      </div>
+
+      <div class="argon-header-right">
+        <span id="modeTag" class="argon-mode-tag {{ 'mode-live' if not settings.dry_run else 'mode-dry' }}">
+          {{ 'LIVE' if not settings.dry_run else 'DRY RUN' }}
+        </span>
+        <button id="btnTopSettings" class="btn btn-argon-white btn-sm" title="Toggle Settings">⚙ Settings</button>
+        <div class="argon-bell-wrap" title="Real-time Alerts Active">
+          <span class="argon-bell-icon">🔔</span>
+          <span class="argon-bell-dot"></span>
+        </div>
+        <div class="argon-avatar-wrap">
+          <img class="argon-avatar-img" src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80" alt="Trader Avatar" />
+          <span class="argon-avatar-name" id="userAvatarName">{{ user_name or 'Kite Trader' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick watchlist & action pills -->
+    <div class="argon-quick-bar">
+      <div class="quick-pills">
+        <span class="argon-quick-label">⚡ Watchlist:</span>
+        <button class="ticker-pill" data-symbol="NIFTY">NIFTY</button>
+        <button class="ticker-pill" data-symbol="BANKNIFTY">BANKNIFTY</button>
+        <button class="ticker-pill" data-symbol="RELIANCE">RELIANCE</button>
+        <button class="ticker-pill" data-symbol="TCS">TCS</button>
+        <button class="ticker-pill" data-symbol="INFY">INFY</button>
+        <button class="ticker-pill" data-symbol="HDFCBANK">HDFCBANK</button>
+        <button class="ticker-pill" data-symbol="TATAMOTORS">TATAMOTORS</button>
+        <button class="ticker-pill" data-symbol="SBIN">SBIN</button>
+      </div>
+      <div class="argon-header-actions">
+        <a href="/static/TradeAI.apk" download class="argon-pill-btn" style="background:rgba(45,206,137,0.15);color:#2dce89;border-color:rgba(45,206,137,0.4);text-decoration:none;display:inline-flex;align-items:center;gap:4px;" title="Download TradeAI Android APK">📱 Android APK</a>
+        <button class="argon-pill-btn" onclick="document.getElementById('tickerInput').focus()">New</button>
+        <button class="argon-pill-btn" onclick="document.getElementById('viewBtnBoth').click()">Filters</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-layout settings-closed">
+
+    <!-- ───────────── LEFT SIDEBAR ───────────── -->
+    <aside class="sidebar">
+
+      <!-- Status & Login -->
+      <section class="card">
+        <h3 class="card-title">Connection</h3>
+        <div class="status-row">
+          <span class="dot {% if logged_in %}green{% endif %}" id="loginDot"></span>
+          <span id="loginStatus">{% if logged_in %}Logged in to Kite{% else %}Not logged in{% endif %}</span>
+        </div>
+        <div class="status-row">
+          <span class="dot" id="engineDot"></span>
+          <span id="engineStatus">Idle</span>
+        </div>
+        <div class="btn-group-vert mt-8">
+          <button id="btnLogin" class="btn {% if logged_in %}btn-success{% else %}btn-secondary{% endif %}">{% if logged_in %}✓ Connected to Kite{% else %}Login to Kite{% endif %}</button>
+          <button id="btnStop" class="btn btn-danger" disabled>■ Stop</button>
+        </div>
+        <details class="mt-8">
+          <summary>Manual token login</summary>
+          <textarea id="manualTokenInput" rows="2" placeholder="Paste redirect URL or request_token"></textarea>
+          <button id="btnManualLogin" class="btn btn-secondary btn-sm mt-4">Submit Token</button>
+        </details>
+      </section>
+
+      
+      <!-- Live price -->
+      <section class="card">
+        <h3 class="card-title">Live Price</h3>
+        <div id="livePriceBox" class="ltp-display">—</div>
+        <div id="livePriceTicker" class="ltp-sub">—</div>
+      </section>
+
+      
+      <!-- Manual trade override -->
+      <section class="card">
+        <h3 class="card-title">Manual Override</h3>
+        <p class="card-hint">Skip analysis — enter directly</p>
+        <div class="btn-group-horiz">
+          <button id="btnLong" class="btn btn-long" disabled>▲ LONG</button>
+          <button id="btnShort" class="btn btn-short" disabled>▼ SHORT</button>
+        </div>
+      </section>
+
+      
+      <!-- Mode toggle -->
+      <section class="card">
+        <h3 class="card-title">Trading Mode</h3>
+        <div class="mode-toggle-row">
+          <label class="toggle-label">
+            <input type="checkbox" id="modeToggle" {{ '' if settings.dry_run else 'checked' }} />
+            <span class="toggle-slider"></span>
+          </label>
+          <span id="modeLabel">{{ 'Live Orders' if not settings.dry_run else 'Dry Run' }}</span>
+        </div>
+        <p class="card-hint">Flip this off (Dry Run) before going live.</p>
+      </section>
+
+      
+      <!-- Dual Scanner Controls -->
+      <section class="card scanner-controls-card">
+        <h3 class="card-title">🔍 Dual Scanner</h3>
+        <div class="status-row">
+          <span class="dot" id="scannerDot"></span>
+          <span id="scannerStatus">Stopped</span>
+          <span id="scannerSymCount" class="muted small" style="margin-left:auto;"></span>
+        </div>
+
+        <!-- Strategy toggles -->
+        <div class="scanner-toggles mt-8">
+          <label class="scanner-toggle-label">
+            <input type="checkbox" id="scannerToggleA" />
+            <span class="scanner-badge scanner-badge-bull">A</span>
+            Bullish Setup
+          </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleB" />
+            <span class="scanner-badge scanner-badge-bear">B</span>
+            Bearish Setup
+          </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleC" />
+            <span class="scanner-badge" style="background:#8b5cf6;color:#fff;">C</span>
+            EMA 20/50/100 + Supertrend
+          </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleD" />
+            <span class="scanner-badge scanner-badge-d">D</span>
+            EMA 50/150/200 Trend & Reversal
+          </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleE" checked />
+            <span class="scanner-badge" style="background:#eab308;color:#000;font-weight:bold;">E</span>
+            Smart Money Acc & Dist
+          </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleF" />
+            <span class="scanner-badge" style="background:#06b6d4;color:#000;font-weight:bold;">F</span>
+            NIFTY Breakout + F&O OI
+          </label>
+        </div>
+
+        <!-- Strategy D Backtest Button -->
+        <button id="btnScannerBacktest" class="btn btn-secondary btn-sm mt-8" style="width:100%;background:rgba(2,132,199,0.14);border:1px solid #0284c7;color:#38bdf8;font-weight:600;">
+          📊 Backtest Strategy D
+        </button>
+
+        <!-- All FNO toggle -->
+        <div class="scanner-toggles mt-8">
+          <label class="scanner-toggle-label">
+            <input type="checkbox" id="scannerAllFno" checked />
+            <span style="font-size:11px;font-weight:700;color:var(--accent);">⚡ All FNO Stocks</span>
+            <span class="muted small">(~90+ symbols)</span>
+          </label>
+        </div>
+
+        <!-- Custom symbol list (shown when All FNO unchecked) -->
+        <div id="scannerCustomSymDiv" class="form-group mt-8 hidden">
+          <label style="font-size:11px;color:var(--muted);">Custom Symbols (comma separated)</label>
+          <input id="scannerSymbols" type="text"
+                 value="{{ ','.join(settings.scanner_symbols) if settings.scanner_symbols and settings.scanner_symbols != ['ALL_FNO'] else 'RELIANCE,TCS,INFY,HDFCBANK' }}"
+                 placeholder="RELIANCE,TCS,INFY" style="font-size:11px;" />
+        </div>
+
+        <!-- Dedicated Start E & F Quick Button -->
+        <button id="btnQuickStartEF" class="btn btn-success btn-sm mt-8" style="width:100%;font-weight:700;display:flex;align-items:center;justify-content:center;gap:6px;background:linear-gradient(87deg, #2dce89 0%, #11cdef 100%);border:none;box-shadow:0 3px 8px rgba(45,206,137,0.3);">
+          ⚡ Start Dual Scanner (E &amp; F)
+        </button>
+
+        <div class="btn-group-vert mt-6">
+          <button id="btnScannerStart" class="btn btn-primary btn-sm">▶ Start Scanner</button>
+          <button id="btnScannerStop"  class="btn btn-danger  btn-sm" disabled>■ Stop Scanner</button>
+        </div>
+        <p class="card-hint mt-4">Scans every 60 s. Alerts only — no auto-orders.</p>
+      </section>
+
+      
+    </aside>
+
+    <!-- ───────────── MAIN CONTENT ───────────── -->
+    <main class="content">
+
+      <!-- Argon Signature 4 KPI Stat Cards (Hero Row from Image) -->
+      <div class="argon-kpi-grid">
+        <!-- Card 1: SPOT & FUTURES LTP (Red/Coral Circle #f5365c) -->
+        <div class="argon-kpi-card">
+          <div class="argon-kpi-inner">
+            <div class="argon-kpi-content">
+              <span class="argon-kpi-label">TOTAL SPOT / FUTURES</span>
+              <span class="argon-kpi-number" id="kpiSpotLtp">₹—</span>
+            </div>
+            <div class="argon-kpi-icon icon-danger">
+              <span>📈</span>
+            </div>
+          </div>
+          <div class="argon-kpi-sub">
+            <span class="argon-trend text-success" id="kpiLtpTrend">↑ 3.48%</span>
+            <span class="argon-sub-text" id="kpiFutLtp">Since last scan</span>
+          </div>
+        </div>
+
+        <!-- Card 2: MARKET SENTIMENT (Orange Circle #fb6340) -->
+        <div class="argon-kpi-card">
+          <div class="argon-kpi-inner">
+            <div class="argon-kpi-content">
+              <span class="argon-kpi-label">MARKET SENTIMENT</span>
+              <span class="argon-kpi-number" id="kpiSentiment">BULLISH</span>
+            </div>
+            <div class="argon-kpi-icon icon-warning">
+              <span>⚡</span>
+            </div>
+          </div>
+          <div class="argon-kpi-sub">
+            <span class="argon-trend text-success" id="kpiVwapStatus">↑ 100%</span>
+            <span class="argon-sub-text" id="kpiAvwapVal">Intraday VWAP Hold</span>
+          </div>
+        </div>
+
+        <!-- Card 3: OPTION CHAIN PCR (Green Circle #2dce89) -->
+        <div class="argon-kpi-card">
+          <div class="argon-kpi-inner">
+            <div class="argon-kpi-content">
+              <span class="argon-kpi-label">OPTION CHAIN PCR</span>
+              <span class="argon-kpi-number" id="kpiPcrVal">1.25</span>
+            </div>
+            <div class="argon-kpi-icon icon-success">
+              <span>🎯</span>
+            </div>
+          </div>
+          <div class="argon-kpi-sub">
+            <span class="argon-trend text-success" id="kpiPcrBias">↑ Bullish</span>
+            <span class="argon-sub-text" id="kpiWalls">Put Writing Dominant</span>
+          </div>
+        </div>
+
+        <!-- Card 4: DUAL SCANNER (Purple Circle #5e72e4) -->
+        <div class="argon-kpi-card">
+          <div class="argon-kpi-inner">
+            <div class="argon-kpi-content">
+              <span class="argon-kpi-label">SCANNER STATUS</span>
+              <span class="argon-kpi-number" id="kpiScannerVal">ACTIVE</span>
+            </div>
+            <div class="argon-kpi-icon icon-primary">
+              <span>📡</span>
+            </div>
+          </div>
+          <div class="argon-kpi-sub">
+            <span class="argon-trend text-primary" id="kpiActiveStrategies">Strat E &amp; F</span>
+            <span class="argon-sub-text" id="kpiSignalsCount">All FNO Universe</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Progress bar -->
+      <div id="progressBar" class="progress-container hidden">
+        <div class="progress-inner">
+          <span id="progressMsg">Analyzing...</span>
+          <div class="spinner"></div>
+        </div>
+      </div>
+
+      <!-- View Switcher Tabs -->
+      <div class="view-switcher-bar">
+        <span class="switcher-label">View Mode:</span>
+        <button id="viewBtnBoth" class="view-btn active" data-view="both">🟢 Both (Futures + Options)</button>
+        <button id="viewBtnFutures" class="view-btn" data-view="futures">🔵 Futures Scorecard</button>
+        <button id="viewBtnOptions" class="view-btn" data-view="options">🟣 Option Chain (11 Strikes)</button>
+      </div>
+
+      <!-- Trade Score Dashboard -->
+      <section id="scoreDashboard" class="card score-dashboard hidden">
+        <div class="score-header">
+          <div>
+            <h2 id="scoreTicker" class="score-ticker">—</h2>
+            <p id="scoreCompany" class="score-company">—</p>
+          </div>
+          <div class="score-big-box">
+            <div id="scoreBig" class="score-big">—</div>
+            <div id="scoreGrade" class="score-grade">—</div>
+            <div id="scoreSignal" class="score-signal">—</div>
+          </div>
+        </div>
+
+        <table class="score-table mt-12">
+          <thead>
+            <tr>
+              <th>Dimension</th><th>Score</th><th>Weight</th><th>Weighted</th>
+            </tr>
+          </thead>
+          <tbody id="scoreTableBody"></tbody>
+          <tfoot>
+            <tr class="score-total-row">
+              <td colspan="3"><strong>Composite Trade Score</strong></td>
+              <td id="scoreTotal"><strong>—</strong></td>
+            </tr>
+          </tfoot>
+        </table>
+
+        <!-- AI Sentiment -->
+        <div id="aiSentimentRow" class="ai-sentiment-row mt-12 hidden">
+          <span class="ai-label">AI Sentiment:</span>
+          <span id="aiSentimentBadge" class="badge badge-neutral">—</span>
+          <span id="aiSentimentReason" class="ai-reason">—</span>
+        </div>
+
+        <!-- Chartink ADX Setup & Volume Filter Card -->
+        <div id="adxSetupCard" class="adx-setup-card mt-12 hidden">
+          <div class="adx-setup-header">
+            <div class="adx-setup-title">
+              <span class="adx-icon">⚡</span>
+              <strong>Intraday Buy Setup (ADX &amp; Volume)</strong>
+              <a href="https://chartink.com/screener/my-intraday-buy-setup-adx" target="_blank" rel="noopener" class="chartink-link" title="Open Chartink Setup">
+                Chartink Screener ↗
+              </a>
+            </div>
+            <span id="adxStatusBadge" class="badge badge-neutral">—</span>
+          </div>
+          <div class="adx-setup-grid mt-8">
+            <div class="adx-metric">
+              <span class="adx-metric-lbl">Multiple EMA</span>
+              <span id="adxEmaStatus" class="adx-metric-val">—</span>
+            </div>
+            <div class="adx-metric">
+              <span class="adx-metric-lbl">Volume vs 10-WMA</span>
+              <span id="adxVolStatus" class="adx-metric-val">—</span>
+            </div>
+            <div class="adx-metric">
+              <span class="adx-metric-lbl">+DI (14) ≥ 24</span>
+              <span id="adxDiStatus" class="adx-metric-val">—</span>
+            </div>
+            <div class="adx-metric">
+              <span class="adx-metric-lbl">Daily Pivot &amp; R1</span>
+              <span id="adxPivotStatus" class="adx-metric-val">—</span>
+            </div>
+          </div>
+          <div id="adxSummaryNotes" class="adx-notes muted mt-4"></div>
+        </div>
+
+        <!-- Recommendation buttons (shown after analysis) -->
+        <div id="postAnalysisBtns" class="post-analysis-btns hidden mt-12">
+          <p class="card-hint">Analysis complete. Review the report then decide:</p>
+          <button id="btnExecute" class="btn btn-primary">🚀 Execute Trade</button>
+        </div>
+      </section>
+
+      
+      <!-- Option Chain Card (ATM +/- 5 Strikes) -->
+      <section id="optionChainCard" class="card option-chain-card hidden">
+        <div class="option-chain-header">
+          <div>
+            <h3 class="card-title" style="margin-bottom:2px;">
+              📊 Option Chain <span class="badge badge-accent">ATM ± 5 Strikes</span>
+            </h3>
+            <p id="optionChainMeta" class="muted small">—</p>
+          </div>
+          <div class="option-chain-badges">
+            <span id="optExpiryBadge" class="opt-tag">Expiry: —</span>
+            <span id="optStepBadge" class="opt-tag">Step: —</span>
+            <span id="optAtmBadge" class="opt-tag opt-tag-atm">ATM: —</span>
+          </div>
+        </div>
+
+        <!-- Derivative Metrics Chips -->
+        <div class="opt-metrics-grid mt-12">
+          <div class="opt-metric-chip">
+            <span class="opt-chip-lbl">Put-Call Ratio (PCR)</span>
+            <div class="opt-chip-val-row">
+              <span id="optPcrVal" class="opt-chip-val">—</span>
+              <span id="optPcrBias" class="badge badge-neutral">—</span>
+            </div>
+            <span id="optPcrSub" class="opt-chip-sub">Weighted: —</span>
+          </div>
+
+          <div class="opt-metric-chip">
+            <span class="opt-chip-lbl">Institutional Ceiling (Resistance)</span>
+            <div class="opt-chip-val-row">
+              <span id="optResStrike" class="opt-chip-val text-bearish">—</span>
+              <span class="badge badge-bear">CALL OI WALL</span>
+            </div>
+            <span id="optResOi" class="opt-chip-sub">OI: —</span>
+          </div>
+
+          <div class="opt-metric-chip">
+            <span class="opt-chip-lbl">Institutional Floor (Support)</span>
+            <div class="opt-chip-val-row">
+              <span id="optSupStrike" class="opt-chip-val text-bullish">—</span>
+              <span class="badge badge-bull">PUT OI WALL</span>
+            </div>
+            <span id="optSupOi" class="opt-chip-sub">OI: —</span>
+          </div>
+
+          <div class="opt-metric-chip">
+            <span class="opt-chip-lbl">ATM Straddle Premium</span>
+            <div class="opt-chip-val-row">
+              <span id="optNetPremium" class="opt-chip-val">—</span>
+              <span class="opt-chip-sub" id="optPremiumsSplit">CE: — | PE: —</span>
+            </div>
+            <span id="optRequiredMove" class="opt-chip-sub">Net Breakeven Move: —</span>
+          </div>
+        </div>
+
+        <!-- Directional Odds Meter -->
+        <div class="opt-prob-block mt-12">
+          <div class="opt-prob-header">
+            <span class="muted small">Option Chain Directional Bias</span>
+            <span id="optProbText" class="opt-prob-split">▲ Upside 50% | 50% Downside ▼</span>
+          </div>
+          <div class="opt-prob-bar">
+            <div id="optProbUpBar" class="opt-prob-bar-up" style="width: 50%;"></div>
+            <div id="optProbDownBar" class="opt-prob-bar-down" style="width: 50%;"></div>
+          </div>
+        </div>
+
+        <!-- 11-Row Option Chain Table -->
+        <div class="table-container mt-12">
+          <table class="option-chain-table">
+            <thead>
+              <tr class="chain-header-top">
+                <th colspan="3" class="th-calls">CALLS</th>
+                <th class="th-strike">STRIKE</th>
+                <th colspan="3" class="th-puts">PUTS</th>
+              </tr>
+              <tr class="chain-header-sub">
+                <th class="th-calls">OI</th>
+                <th class="th-calls">Volume</th>
+                <th class="th-calls">LTP (₹)</th>
+                <th class="th-strike">Strike Price</th>
+                <th class="th-puts">LTP (₹)</th>
+                <th class="th-puts">Volume</th>
+                <th class="th-puts">OI</th>
+              </tr>
+            </thead>
+            <tbody id="optionChainTableBody">
+              <tr><td colspan="7" class="text-center muted">Run analysis or select stock to load option chain...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Strategy F: NIFTY 50 Sustained Breakout + F&O OI Confirmation Dashboard -->
+      <section id="sustainedBreakoutCard" class="card mt-8">
+        <div class="scanner-signals-header" style="flex-wrap:wrap;gap:10px;">
+          <h3 class="card-title" style="color:#0891b2;display:flex;align-items:center;gap:6px;">
+            ⚡ NIFTY 50: Sustained Breakout &amp; F&amp;O Confluence Scanner
+          </h3>
+          <span class="badge" style="background:#ecfeff;color:#0e7490;border:1px solid #a5f3fc;font-size:11px;font-weight:700;">
+            Strategy F • 5m + Derivatives
+          </span>
+        </div>
+
+        <!-- Sleek Workflow Breadcrumb Flow -->
+        <div class="f-workflow-flow mt-8">
+          <div class="f-step"><span class="f-step-num">1</span> Price Action First</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num">2</span> Sustained Breakout/Retest</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num">3</span> EMA 10/21/50 + ST (7,3)</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num">4</span> AVWAP &amp; Vol &ge; 1.5x</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num">5</span> Futures OI Buildup</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num">6</span> Options Chain PCR</div>
+        </div>
+
+        <!-- 3 Distinct Panels Grid -->
+        <div class="f-dashboard-grid mt-12">
+
+          <!-- PANEL 1: MARKET TREND -->
+          <div class="f-panel f-panel-1">
+            <div class="f-panel-header">
+              <span class="f-panel-title">
+                📈 Panel 1: Market Trend
+              </span>
+              <span id="fPanelSpotPrice" class="f-panel-pill f-pill-cyan">NIFTY: ₹—</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">EMA 10 / 21 / 50:</span>
+                <span id="fPanelEmaVal" class="f-value">— / — / —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">EMA Trend Alignment:</span>
+                <span id="fPanelEmaStatus" class="f-badge f-badge-neutral">BEARISH / MIXED</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Supertrend (7, 3):</span>
+                <span id="fPanelSupertrend" class="f-badge f-badge-neutral">— (—)</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Anchored VWAP (AVWAP):</span>
+                <span id="fPanelAvwap" class="f-value">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Consolidation Range:</span>
+                <span id="fPanelRange" class="f-value">R: — | S: —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Volume vs 20-MA:</span>
+                <span id="fPanelVolume" class="f-badge f-badge-warn">Volume Not Available</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANEL 2: DERIVATIVES CONFIRMATION -->
+          <div class="f-panel f-panel-2">
+            <div class="f-panel-header">
+              <span class="f-panel-title">
+                🎯 Panel 2: Derivatives (F&amp;O)
+              </span>
+              <span id="fPanelFuturesLtp" class="f-panel-pill f-pill-purple">FUT: ₹—</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">Active Contract:</span>
+                <span id="fPanelFutSym" class="f-value">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Futures Buildup:</span>
+                <span id="fPanelBuildup" class="f-badge f-badge-neutral">NEUTRAL</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Futures OI &amp; Change:</span>
+                <span id="fPanelOi" class="f-value">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Options Call vs Put OI:</span>
+                <span id="fPanelOptionsOi" class="f-value">C: — | P: —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Options PCR &amp; Writing:</span>
+                <span id="fPanelPcr" class="f-badge f-badge-neutral">PCR — • BALANCED</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Volume/OI Safety Guard:</span>
+                <span id="fPanelDataValid" class="f-badge f-badge-warn">⚠️ Missing / Inactive</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANEL 3: TRADING SIGNAL & TARGETS -->
+          <div class="f-panel f-panel-3">
+            <div class="f-panel-header">
+              <span class="f-panel-title">
+                ⚡ Panel 3: Trading Signal
+              </span>
+              <span id="fPanelSignalScore" class="f-panel-pill f-pill-score">Score: 0 / 100</span>
+            </div>
+            <div class="f-signal-hero">
+              <span id="fPanelSignalBadge" class="f-signal-badge-wait">
+                WAIT / NO TRADE
+              </span>
+              <span id="fPanelSetupStatus" class="f-setup-status">Awaiting Setup</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">Hypothetical Entry:</span>
+                <span id="fPanelEntry" class="f-value">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Structural Stop-Loss:</span>
+                <span id="fPanelSl" class="f-value" style="color:#dc2626;">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Target 1 (1:1.5) / Target 2 (1:2.5):</span>
+                <span id="fPanelTargets" class="f-value" style="color:#16a34a;">— / —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Risk : Reward Ratio:</span>
+                <span id="fPanelRr" class="f-value" style="color:#0284c7;">1:1.5</span>
+              </div>
+            </div>
+            <div id="fPanelReasonsBox" class="f-reasons-box">
+              <div id="fPanelReasonsFor" class="f-reasons-for"></div>
+              <div id="fPanelReasonsAgainst" class="f-reasons-against"></div>
+            </div>
+          </div>
+
+        </div>
+      </section>
+
+      
+      <!-- Live Scanner Signals Card -->
+      <section id="scannerSignalsCard" class="card scanner-signals-card hidden">
+        <div class="scanner-signals-header">
+          <h3 class="card-title">📡 Live Scanner Signals</h3>
+          <span id="scannerSignalCount" class="badge badge-accent">0 signals</span>
+          <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+            <button id="btnVoiceToggle" class="btn btn-secondary btn-sm" title="Toggle Voice Alerts" style="font-size:11px;">🔊 Voice: ON</button>
+            <button id="btnClearSignals" class="btn btn-secondary btn-sm">Clear</button>
+          </div>
+        </div>
+        <div class="table-container mt-8">
+          <table class="scanner-signals-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Strategy</th>
+                <th>Direction</th>
+                <th>Symbol</th>
+                <th>Futures</th>
+                <th>Spot ₹</th>
+                <th>ATM Option</th>
+                <th>Action</th>
+              </tr>
+            </thead>
+            <tbody id="scannerSignalsTbody">
+              <tr><td colspan="8" class="text-center muted">No signals yet — start scanner to monitor...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      
+      <!-- ─── Smart Money Accumulation & Distribution Dashboard (Section 10) ─── -->
+      <section id="smartMoneyCard" class="card mt-8">
+        <div class="scanner-signals-header" style="flex-wrap:wrap;gap:10px;">
+          <h3 class="card-title" style="color:#eab308;display:flex;align-items:center;gap:6px;">
+            🏦 Smart Money Scanner: Bottoms &amp; Tops
+          </h3>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-left:auto;">
+            <button id="smTabAcc" class="btn btn-sm btn-primary" style="background:#eab308;border-color:#ca8a04;color:#000;font-weight:700;">🟢 Bottom Accumulation</button>
+            <button id="smTabDist" class="btn btn-sm btn-secondary">🔴 Top Distribution</button>
+            <button id="smTabConf" class="btn btn-sm btn-secondary">⚡ Confirmed Signals</button>
+            <button id="smTabWatch" class="btn btn-sm btn-secondary">👁 Watchlist</button>
+          </div>
+        </div>
+        <p class="muted small mt-4" id="smSectionDesc">
+          Institutional accumulation setups near demand zones with rising OBV, positive volume delta, and futures long buildup.
+        </p>
+        <div class="table-container mt-8">
+          <table class="scanner-signals-table" style="font-size:11px;">
+            <thead>
+              <tr id="smTableHead">
+                <th>Symbol</th>
+                <th>Futures</th>
+                <th>Spot ₹</th>
+                <th>Score</th>
+                <th>Setup / Status</th>
+                <th>Zone Distance</th>
+                <th>OBV</th>
+                <th>Vol Expansion</th>
+                <th>Futures Buildup</th>
+                <th>Supertrend</th>
+                <th>Order Flow</th>
+              </tr>
+            </thead>
+            <tbody id="smTableTbody">
+              <tr><td colspan="11" class="text-center muted" style="padding:18px;">Start scanner to identify institutional accumulation &amp; distribution setups...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      
+      <!-- P&L card -->
+      <section id="pnlCard" class="card pnl-card hidden">
+        <h3 class="card-title">Open Position P&amp;L</h3>
+        <div id="pnlDisplay" class="pnl-display">₹0.00</div>
+        <div id="positionsTable"></div>
+      </section>
+
+      
+      <!-- Argon Midnight Navy Overview Chart Card -->
+      <section class="card argon-chart-card">
+        <div class="argon-chart-header">
+          <div>
+            <span class="argon-chart-eyebrow">OVERVIEW</span>
+            <h3 class="argon-chart-title">Price Action &amp; VWAP</h3>
+          </div>
+          <div class="argon-chart-controls">
+            <span id="chartTicker" class="chart-ticker-label">—</span>
+            <div class="argon-timeframe-pills">
+              <button class="argon-tf-btn active">Month</button>
+              <button class="argon-tf-btn">Week</button>
+              <button class="argon-tf-btn">Live</button>
+            </div>
+          </div>
+        </div>
+        <div id="chart" class="chart-container"></div>
+      </section>
+
+      
+      <!-- Reports -->
+      <section class="card">
+        <h3 class="card-title">📄 Analysis Reports</h3>
+        <button id="btnRefreshReports" class="btn btn-secondary btn-sm">Refresh</button>
+        <div id="reportsList" class="reports-list mt-8">
+          <p class="muted">No reports yet — run an analysis first.</p>
+        </div>
+        <div id="reportViewer" class="report-viewer hidden">
+          <div class="report-viewer-header">
+            <span id="reportViewerTitle">—</span>
+            <button id="btnCloseReport" class="btn btn-secondary btn-sm">✕ Close</button>
+          </div>
+          <pre id="reportViewerContent" class="report-content"></pre>
+        </div>
+      </section>
+
+      
+      <!-- Activity log -->
+      <section class="card">
+        <h3 class="card-title">Activity Log</h3>
+        <div id="logContainer" class="log-container"></div>
+      </section>
+
+      
+    </main>
+
+    <!-- ───────────── RIGHT PANEL (Settings) ───────────── -->
+    <aside class="settings-panel" id="settingsPanel">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <h3 class="card-title" style="margin:0;">⚙ Settings</h3>
+        <button type="button" id="btnCloseSettings" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:12px;" title="Close Settings">✕</button>
+      </div>
+      <form id="settingsForm">
+
+        <div class="form-group">
+          <label>Kite API Key</label>
+          <input name="kite_api_key" type="text" value="{{ settings.kite_api_key or '' }}" />
+        </div>
+        <div class="form-group">
+          <label>Kite API Secret</label>
+          <input name="kite_api_secret" type="password" value="{{ settings.kite_api_secret or '' }}" />
+        </div>
+        <div class="form-group">
+          <label>AI Provider</label>
+          <select name="ai_provider" id="aiProviderSelect">
+            <option value="gemini" {{ 'selected' if settings.ai_provider == 'gemini' }}>Gemini</option>
+            <option value="claude" {{ 'selected' if settings.ai_provider == 'claude' }}>Claude</option>
+          </select>
+        </div>
+        <div class="form-group" id="geminiSection">
+          <label>Gemini API Key</label>
+          <input name="gemini_api_key" type="password" value="{{ settings.gemini_api_key or '' }}" />
+        </div>
+        <div class="form-group" id="geminiModelGroup">
+          <label>Gemini Model</label>
+          <input name="gemini_model" type="text" value="{{ settings.gemini_model or 'gemini-2.0-flash' }}" />
+        </div>
+        <div class="form-group hidden" id="claudeSection">
+          <label>Anthropic API Key</label>
+          <input name="anthropic_api_key" type="password" value="{{ settings.anthropic_api_key or '' }}" />
+        </div>
+
+        <hr />
+        <div class="form-group">
+          <label>Default Ticker</label>
+          <input name="ticker" type="text" value="{{ settings.ticker or 'RELIANCE' }}" />
+        </div>
+        <div class="form-group">
+          <label>Default Product</label>
+          <select name="default_product">
+            <option value="MIS" {{ 'selected' if (settings.default_product or 'MIS') == 'MIS' }}>MIS (Intraday)</option>
+            <option value="NRML" {{ 'selected' if settings.default_product == 'NRML' }}>NRML (Normal / Overnight)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Scanner Max Lot Size Filter (&lt; value)</label>
+          <input name="scanner_max_lot_size" type="number" min="1" step="50" value="{{ settings.scanner_max_lot_size or 2500 }}" />
+        </div>
+
+        <hr />
+        <div class="form-group form-row">
+          <label>Stop Loss (₹)</label>
+          <input name="max_loss" type="number" step="100" value="{{ settings.max_loss or 5000 }}" />
+          <label class="checkbox-label">
+            <input type="checkbox" name="sl_enabled" {{ 'checked' if settings.sl_enabled }} /> Enabled
+          </label>
+        </div>
+        <div class="form-group form-row">
+          <label>Target Profit (₹)</label>
+          <input name="target_profit" type="number" step="100" value="{{ settings.target_profit or 10000 }}" />
+          <label class="checkbox-label">
+            <input type="checkbox" name="target_enabled" {{ 'checked' if settings.target_enabled }} /> Enabled
+          </label>
+        </div>
+        <div class="form-group form-row">
+          <label>Time Exit</label>
+          <input name="time_exit" type="time" value="{{ settings.time_exit or '14:30' }}" />
+          <label class="checkbox-label">
+            <input type="checkbox" name="time_exit_enabled" {{ 'checked' if settings.time_exit_enabled }} /> Enabled
+          </label>
+        </div>
+
+        <hr />
+        <div class="form-group">
+          <label>Buy Score Threshold (LONG when score ≥)</label>
+          <input name="buy_score_threshold" type="number" min="0" max="100" step="1"
+                 value="{{ settings.buy_score_threshold or 70 }}" />
+        </div>
+        <div class="form-group">
+          <label>Sell Score Threshold (SHORT when score ≤)</label>
+          <input name="sell_score_threshold" type="number" min="0" max="100" step="1"
+                 value="{{ settings.sell_score_threshold or 30 }}" />
+        </div>
+
+        <hr />
+        <div class="form-group">
+          <label>Custom AI Note (optional)</label>
+          <textarea name="custom_ai_note" rows="2">{{ settings.custom_ai_note or '' }}</textarea>
+        </div>
+
+        <button type="submit" class="btn btn-primary">Save Settings</button>
+        <span id="settingsSaved" class="save-ok hidden">✓ Saved</span>
+      </form>
+    </aside>
+
+    <!-- Settings toggle button -->
+    <button id="settingsToggle" class="settings-toggle-btn" title="Settings">⚙</button>
+  </div>
+
+  <!-- ─── Scanner Signal Popup Overlay ─── -->
+  <div id="scannerPopupOverlay" class="scanner-popup-overlay hidden">
+    <div id="scannerPopup" class="scanner-popup">
+      <div id="scannerPopupHeader" class="scanner-popup-header">
+        <div class="scanner-popup-header-left">
+          <span id="scannerPopupTitle">SIGNAL DETECTED</span>
+          <span id="scannerPopupQueueBadge" class="popup-queue-badge hidden">+1 queued</span>
+        </div>
+        <button id="popBtnCloseIcon" class="popup-close-x" title="Dismiss">✕</button>
+      </div>
+      <div class="scanner-popup-body">
+        
+        <!-- Underlying Spot & Futures Grid Card -->
+        <div class="popup-meta-card">
+          <div class="popup-meta-grid">
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">SYMBOL</span>
+              <div class="popup-cell-val"><strong id="popSymbol">—</strong></div>
+            </div>
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">SPOT PRICE</span>
+              <div class="popup-cell-val" id="popSpot">—</div>
+            </div>
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">SIGNAL TIME</span>
+              <div class="popup-cell-val" id="popTime">—</div>
+            </div>
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">FUTURES</span>
+              <div class="popup-cell-val"><strong id="popFutures">—</strong></div>
+            </div>
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">FUTURES LTP</span>
+              <div class="popup-cell-val" id="popFutLtp">—</div>
+            </div>
+            <div class="popup-meta-cell">
+              <span class="popup-cell-label">EXPIRY</span>
+              <div class="popup-cell-val" id="popExpiry">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ATM Option block -->
+        <div id="popAtmBlock" class="popup-atm-card mt-12 hidden">
+          <div class="popup-atm-header">
+            <span class="popup-atm-title" id="popAtmTitle">BUY ATM CALL (CE)</span>
+            <span class="popup-atm-badge">RECOMMENDED CONTRACT</span>
+          </div>
+          <div class="popup-atm-grid">
+            <div class="popup-atm-cell">
+              <span class="popup-cell-label">CONTRACT</span>
+              <div class="popup-cell-val"><strong id="popAtmSym">—</strong></div>
+            </div>
+            <div class="popup-atm-cell">
+              <span class="popup-cell-label">STRIKE</span>
+              <div class="popup-cell-val" id="popAtmStrike">—</div>
+            </div>
+            <div class="popup-atm-cell">
+              <span class="popup-cell-label">EXPIRY</span>
+              <div class="popup-cell-val" id="popAtmExpiry">—</div>
+            </div>
+            <div class="popup-atm-cell">
+              <span class="popup-cell-label">LTP</span>
+              <div class="popup-cell-val popup-ltp-highlight" id="popAtmLtp">—</div>
+            </div>
+            <div class="popup-atm-cell">
+              <span class="popup-cell-label">LOT SIZE</span>
+              <div class="popup-cell-val" id="popAtmLot">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Conditions summary -->
+        <div id="popConditions" class="popup-conditions-card mt-12 hidden">
+          <div class="popup-cell-label">CONFLUENCE &amp; CONDITIONS</div>
+          <div id="popConditionsList" class="popup-conditions-list mt-6"></div>
+        </div>
+
+        <!-- Detailed Calculations breakdown (toggled via VIEW DETAILS) -->
+        <div id="popDetailedValues" class="popup-detailed-values mt-12 hidden"></div>
+
+        <!-- Trade Confirmation Inline Panel -->
+        <div id="popTradeConfirm" class="popup-trade-confirm mt-12 hidden">
+          <div class="popup-confirm-header">
+            <p class="popup-warn" style="margin:0;font-weight:700;display:flex;align-items:center;gap:6px;">
+              <span>⚡</span> Order Confirmation
+            </p>
+            <span id="popTradeModeBadge" class="mode-tag mode-dry">DRY RUN</span>
+          </div>
+          <div id="popTradeDetails" class="popup-trade-details mt-8"></div>
+          <div class="popup-trade-inputs mt-10">
+            <div class="popup-input-group">
+              <label class="popup-input-label">Product:</label>
+              <select id="popOrderProduct" class="popup-select">
+                <option value="MIS" {{ 'selected' if (settings.default_product or 'MIS') == 'MIS' }}>MIS (Intraday)</option>
+                <option value="NRML" {{ 'selected' if settings.default_product == 'NRML' }}>NRML (Normal)</option>
+              </select>
+            </div>
+            <div class="popup-input-group">
+              <label class="popup-input-label">Lots:</label>
+              <input type="number" id="popOrderLots" min="1" max="50" value="1" class="popup-input-number" />
+              <span id="popOrderTotalQty" class="popup-qty-label">(Total Qty: <strong id="popOrderQtyVal">—</strong>)</span>
+            </div>
+          </div>
+          <div id="popOrderFeedback" class="hidden mt-8"></div>
+          <div class="popup-confirm-btns mt-12">
+            <button id="popBtnConfirmOrder" class="btn btn-primary" style="font-weight:700;">🚀 Execute Order</button>
+            <button id="popBtnCancelConfirm" class="btn btn-secondary">Cancel</button>
+          </div>
+        </div>
+
+      </div>
+
+      <div class="scanner-popup-actions">
+        <button id="popBtnTrade" class="btn btn-primary btn-trade-main">🟢 BUY ATM CE</button>
+        <button id="popBtnDetails" class="btn btn-secondary">VIEW DETAILS</button>
+        <button id="popBtnDismiss" class="btn btn-secondary">DISMISS</button>
+      </div>
+    </div>
+  </div>
+    </div>
+  </div>
+
+  <!-- ─── Strategy D Backtest Modal ─── -->
+  <div id="backtestModalOverlay" class="backtest-modal-overlay hidden">
+    <div class="backtest-modal">
+      <div class="backtest-header">
+        <h3>📊 Strategy D: EMA 50/150/200 Historical Backtest (F&O Stocks)</h3>
+        <button id="btnCloseBacktestModal" class="btn btn-secondary btn-sm">✕ Close</button>
+      </div>
+      <div class="backtest-body">
+        <div class="backtest-controls-bar">
+          <div>
+            <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:2px;">Lookback Period</label>
+            <select id="btLookbackDays" style="font-size:11px;padding:4px 8px;background:var(--bg);color:#fff;border:1px solid var(--border);border-radius:4px;">
+              <option value="90">90 Days</option>
+              <option value="180" selected>180 Days (~6 Months)</option>
+              <option value="250">250 Days (~1 Year)</option>
+              <option value="365">365 Days</option>
+            </select>
+          </div>
+          <div>
+            <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:2px;">Universe</label>
+            <select id="btUniverse" style="font-size:11px;padding:4px 8px;background:var(--bg);color:#fff;border:1px solid var(--border);border-radius:4px;">
+              <option value="ALL_FNO" selected>All Listed F&O Stocks (Non-futures excluded)</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;margin-top:14px;">
+            <input type="checkbox" id="btRequireBreakout" checked />
+            <label for="btRequireBreakout" style="font-size:11px;color:#e2e8f0;cursor:pointer;">Require Prev Day Breakout</label>
+          </div>
+          <div style="margin-left:auto;margin-top:8px;">
+            <button id="btnRunBacktest" class="btn btn-primary btn-sm" style="background:#0284c7;border-color:#0284c7;font-weight:600;">
+              🚀 Run Backtest
+            </button>
+          </div>
+        </div>
+
+        <!-- Backtest stats grid -->
+        <div id="btStatsGrid" class="backtest-stats-grid">
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">Total Trades</div>
+            <div class="backtest-stat-value" id="btStatTotalTrades">—</div>
+          </div>
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">Win Rate</div>
+            <div class="backtest-stat-value" id="btStatWinRate" style="color:#22c55e;">—</div>
+          </div>
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">Profit Factor</div>
+            <div class="backtest-stat-value" id="btStatProfitFactor" style="color:#38bdf8;">—</div>
+          </div>
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">Total Return</div>
+            <div class="backtest-stat-value" id="btStatTotalReturn">—</div>
+          </div>
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">Max Drawdown</div>
+            <div class="backtest-stat-value" id="btStatMaxDd" style="color:#ef4444;">—</div>
+          </div>
+          <div class="backtest-stat-card">
+            <div class="backtest-stat-label">F&O Symbols</div>
+            <div class="backtest-stat-value" id="btStatSymbols">—</div>
+          </div>
+        </div>
+
+        <!-- Trades table -->
+        <div class="backtest-table-wrap">
+          <table class="backtest-table">
+            <thead>
+              <tr>
+                <th>Exit Date</th>
+                <th>Symbol</th>
+                <th>Futures</th>
+                <th>Direction</th>
+                <th>Type</th>
+                <th>Entry ₹</th>
+                <th>Exit ₹</th>
+                <th>P&L (%)</th>
+                <th>P&L (Pts)</th>
+                <th>Exit Reason</th>
+              </tr>
+            </thead>
+            <tbody id="btTradesTbody">
+              <tr><td colspan="10" class="text-center muted" style="padding:24px;">Click "Run Backtest" above to simulate historical trades across the F&O universe.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.SERVER_LOGGED_IN = {{ 'true' if logged_in else 'false' }};
+    window.SERVER_USER_NAME = {{ (user_name or '') | tojson }};
+  </script>
+  <script src="/static/socket.io.min.js"></script>
+  <script src="/static/lightweight-charts.standalone.production.js"></script>
+  <script src="/static/dashboard.js?v=3.1"></script>
+</body>
+</html>

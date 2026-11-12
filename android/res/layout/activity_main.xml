@@ -1,0 +1,126 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/colorBackground">
+
+    <!-- Top Action Bar -->
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingLeft="16dp"
+        android:paddingRight="12dp"
+        android:background="#172B4D">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="⚡ TradeAI"
+            android:textColor="#11CDEF"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/txtCurrentHost"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="192.168.1.43:5050"
+            android:textColor="#8898AA"
+            android:textSize="12sp"
+            android:layout_marginRight="8dp" />
+
+        <Button
+            android:id="@+id/btnConfigServer"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:text="⚙ IP"
+            android:textColor="#FFFFFF"
+            android:background="#2563EB"
+            android:textSize="12sp"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp" />
+
+    </LinearLayout>
+
+    <!-- Web Progress Bar -->
+    <ProgressBar
+        android:id="@+id/webProgressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="3dp"
+        android:layout_below="@id/topBar"
+        android:progressDrawable="@android:color/holo_blue_light"
+        android:visibility="gone" />
+
+    <!-- Main WebView -->
+    <WebView
+        android:id="@+id/mainWebView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/webProgressBar" />
+
+    <!-- Offline / Connection Failed Overlay -->
+    <LinearLayout
+        android:id="@+id/layoutError"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_below="@id/topBar"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:padding="32dp"
+        android:background="@color/colorBackground"
+        android:visibility="gone">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="📡"
+            android:textSize="54sp"
+            android:layout_marginBottom="16dp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cannot Connect to TradeAI Server"
+            android:textColor="@color/colorText"
+            android:textSize="20sp"
+            android:textStyle="bold"
+            android:gravity="center"
+            android:layout_marginBottom="8dp" />
+
+        <TextView
+            android:id="@+id/txtErrorMsg"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Please make sure your TradeAI app is running on your PC (port 5050) and both devices are connected to the same Wi-Fi network."
+            android:textColor="@color/colorMuted"
+            android:textSize="14sp"
+            android:gravity="center"
+            android:layout_marginBottom="24dp" />
+
+        <Button
+            android:id="@+id/btnRetry"
+            android:layout_width="200dp"
+            android:layout_height="48dp"
+            android:text="🔄 Retry Connection"
+            android:background="#2DCE89"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold"
+            android:layout_marginBottom="12dp" />
+
+        <Button
+            android:id="@+id/btnChangeIp"
+            android:layout_width="200dp"
+            android:layout_height="48dp"
+            android:text="⚙ Change Server IP"
+            android:background="#5E72E4"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold" />
+
+    </LinearLayout>
+
+</RelativeLayout>
