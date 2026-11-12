@@ -1,10 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/api_service.dart';
 import '../services/voice_service.dart';
 import '../theme/trade_theme.dart';
 
 class SettingsScreen extends StatefulWidget {
-  const SettingsScreen({Key? key}) : super(key: key);
+  const SettingsScreen({super.key});
 
   @override
   State<SettingsScreen> createState() => _SettingsScreenState();
@@ -18,9 +20,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _tokenController = TextEditingController();
 
   bool _isTesting = false;
+  bool _isLoggingIn = false;
+  bool _isSubmittingToken = false;
   int? _latencyMs;
   bool _isLoggedIn = false;
   String _userName = "Checking...";
+  Timer? _authPollTimer;
 
   @override
   void initState() {
@@ -31,6 +36,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   void dispose() {
+    _authPollTimer?.cancel();
     _urlController.dispose();
     _tokenController.dispose();
     super.dispose();
@@ -43,6 +49,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         _isLoggedIn = status['logged_in'] ?? false;
         _userName = status['user_name'] ?? (_isLoggedIn ? "Kite User" : "Not Connected");
       });
+      if (_isLoggedIn) {
+        _authPollTimer?.cancel();
+      }
     }
   }
 
@@ -86,6 +95,71 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _testConnection();
   }
 
+  Future<void> _launchKiteLogin() async {
+    setState(() => _isLoggingIn = true);
+    final loginUrl = await _api.getLoginUrl();
+    if (mounted) setState(() => _isLoggingIn = false);
+
+    if (loginUrl != null) {
+      final uri = Uri.parse(loginUrl);
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri, mode: LaunchMode.externalApplication);
+      } else {
+        // Fallback open dashboard
+        final dashUri = Uri.parse(_api.baseUrl);
+        await launchUrl(dashUri, mode: LaunchMode.externalApplication);
+      }
+
+      // Start polling for successful login
+      _authPollTimer?.cancel();
+      int checks = 0;
+      _authPollTimer = Timer.periodic(const Duration(seconds: 3), (timer) async {
+        checks++;
+        await _checkStatus();
+        if (_isLoggedIn || checks > 40) {
+          timer.cancel();
+        }
+      });
+    } else {
+      // Direct open server root in browser
+      final dashUri = Uri.parse(_api.baseUrl);
+      await launchUrl(dashUri, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _submitManualToken() async {
+    final token = _tokenController.text.trim();
+    if (token.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please enter a request token or redirected URL")),
+      );
+      return;
+    }
+
+    setState(() => _isSubmittingToken = true);
+    final res = await _api.loginManual(token);
+    if (mounted) {
+      setState(() => _isSubmittingToken = false);
+      if (res['ok'] == true) {
+        _tokenController.clear();
+        await _checkStatus();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(res['message'] ?? "Kite Login Successful!"),
+            backgroundColor: TradeTheme.bullish,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Login error: ${res['error'] ?? 'Invalid token'}"),
+            backgroundColor: TradeTheme.bearish,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -119,7 +193,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 : TradeTheme.cardBorder,
                           ),
                           backgroundColor: _urlController.text.contains("onrender.com")
-                              ? TradeTheme.primary.withOpacity(0.12)
+                              ? TradeTheme.primary.withValues(alpha: 0.12)
                               : TradeTheme.surfaceElevated,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -138,7 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                 : TradeTheme.cardBorder,
                           ),
                           backgroundColor: _urlController.text.contains("192.168")
-                              ? TradeTheme.primary.withOpacity(0.12)
+                              ? TradeTheme.primary.withValues(alpha: 0.12)
                               : TradeTheme.surfaceElevated,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           padding: const EdgeInsets.symmetric(vertical: 12),
@@ -201,7 +275,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           ),
           const SizedBox(height: 16),
 
-          // Kite Connect Auth Status
+          // Kite Connect Auth Status & Login Actions
           _buildCard(
             title: "ZERODHA KITE STATUS",
             icon: Icons.shield,
@@ -235,10 +309,86 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ],
                 ),
                 const SizedBox(height: 12),
-                const Text(
-                  "Your Kite session is managed automatically through the server token.json cache.",
-                  style: TextStyle(fontSize: 11, color: TradeTheme.textMuted),
-                ),
+
+                if (!_isLoggedIn) ...[
+                  // Primary 1-Tap Login Button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _isLoggingIn ? null : _launchKiteLogin,
+                      icon: _isLoggingIn
+                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                          : const Icon(Icons.login),
+                      label: Text(_isLoggingIn ? "Opening Kite..." : "Log in with Zerodha Kite"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: TradeTheme.accentOrange,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Manual Token Entry Accordion / Form
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: TradeTheme.surfaceElevated,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: TradeTheme.cardBorder),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "OR PASTE REQUEST_TOKEN / CALLBACK URL",
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: TradeTheme.textMuted),
+                        ),
+                        const SizedBox(height: 8),
+                        TextField(
+                          controller: _tokenController,
+                          style: const TextStyle(fontSize: 12),
+                          decoration: InputDecoration(
+                            hintText: "Paste token or redirect URL here...",
+                            hintStyle: const TextStyle(color: TradeTheme.textMuted, fontSize: 12),
+                            isDense: true,
+                            contentPadding: const EdgeInsets.all(10),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(color: TradeTheme.cardBorder),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _isSubmittingToken ? null : _submitManualToken,
+                            icon: const Icon(Icons.check, size: 16),
+                            label: Text(_isSubmittingToken ? "Connecting..." : "Exchange Token"),
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: TradeTheme.primary),
+                              foregroundColor: TradeTheme.primary,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else ...[
+                  // Re-authenticate button if already logged in
+                  OutlinedButton.icon(
+                    onPressed: _launchKiteLogin,
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text("Re-authenticate Kite Session"),
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: TradeTheme.cardBorder),
+                      foregroundColor: TradeTheme.textSecondary,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

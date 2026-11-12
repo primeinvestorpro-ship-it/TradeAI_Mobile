@@ -147,4 +147,32 @@ class ApiService {
     } catch (_) {}
     return {};
   }
+
+  Future<String?> getLoginUrl() async {
+    try {
+      final resp = await http.post(
+        _uri('/api/login'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'force': true}),
+      ).timeout(const Duration(seconds: 6));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return data['login_url'] as String?;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<Map<String, dynamic>> loginManual(String tokenInput) async {
+    try {
+      final resp = await http.post(
+        _uri('/api/login/manual'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token_input': tokenInput.trim()}),
+      ).timeout(const Duration(seconds: 8));
+      return jsonDecode(resp.body) as Map<String, dynamic>;
+    } catch (e) {
+      return {'ok': false, 'error': e.toString()};
+    }
+  }
 }
