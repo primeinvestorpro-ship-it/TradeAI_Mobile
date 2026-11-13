@@ -138,6 +138,17 @@ class ApiService {
     return {};
   }
 
+  Future<Map<String, dynamic>> getSustainedBreakout() async {
+    try {
+      final resp = await http.get(_uri('/api/scanner/sustained_breakout')).timeout(const Duration(seconds: 6));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body);
+        return (data['data'] as Map<String, dynamic>?) ?? {};
+      }
+    } catch (_) {}
+    return {};
+  }
+
   Future<Map<String, dynamic>> getLastAnalysis() async {
     try {
       final resp = await http.get(_uri('/api/last_analysis')).timeout(const Duration(seconds: 5));

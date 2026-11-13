@@ -23,10 +23,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
   bool _isStratEEnabled = true;
   bool _isStratFEnabled = true;
 
-  double _pcr = 1.25;
-  String _marketSentiment = "BULLISH";
-  int _vwapHoldPercent = 100;
-  String _pcrAnalysis = "Put Writing Dominant";
+  double _pcr = 0.93;
+  String _marketSentiment = "NEUTRAL";
+  int _vwapHoldPercent = 30;
+  String _vwapSubtitle = "Below AVWAP (25283.7)";
+  bool _isAboveVwap = false;
+  String _pcrAnalysis = "Ceil ₹25,200 · Floor ₹25,000";
 
   List<ScannerSignal> _signals = [];
   final Set<String> _knownSignalIds = {};
@@ -72,22 +74,62 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _knownSignalIds.removeAll(removed);
     }
 
-    // Calculate dynamic sentiment from signals
-    if (signals.isNotEmpty) {
-      final bullishCount = signals.where((s) => s.isBullish).length;
-      final bearishCount = signals.length - bullishCount;
-      if (bullishCount >= bearishCount) {
-        _marketSentiment = "BULLISH";
-        _vwapHoldPercent = 100;
-        _pcr = 1.25;
-        _pcrAnalysis = "Put Writing Dominant";
-      } else {
-        _marketSentiment = "BEARISH";
-        _vwapHoldPercent = 40;
-        _pcr = 0.72;
-        _pcrAnalysis = "Call Writing Dominant";
+    // Fetch dynamic live market trend, score and PCR from breakout & option chain
+    try {
+      final breakout = await _api.getSustainedBreakout();
+      if (breakout.isNotEmpty) {
+        final p1 = breakout['market_trend'] as Map<String, dynamic>? ?? {};
+        final p2 = breakout['derivatives'] as Map<String, dynamic>? ?? {};
+        final p3 = breakout['trading_signal'] as Map<String, dynamic>? ?? {};
+
+        final score = (p3['confidence_score'] as num?)?.toInt() ?? 0;
+        final dir = p3['direction']?.toString().toUpperCase() ?? 'NO TRADE';
+
+        if (score >= 70 || dir == 'LONG') {
+          _marketSentiment = "BULLISH ($score)";
+        } else if ((score > 0 && score <= 35) || dir == 'SHORT') {
+          _marketSentiment = "BEARISH ($score)";
+        } else if (score > 0) {
+          _marketSentiment = "NEUTRAL ($score)";
+        } else {
+          _marketSentiment = "NEUTRAL";
+        }
+
+        final isBelow = p1['price_vs_avwap'] == 'BELOW';
+        final isAbove = p1['price_vs_avwap'] == 'ABOVE';
+        _isAboveVwap = isAbove;
+        final avwap = (p1['avwap'] as num?)?.toDouble();
+        _vwapHoldPercent = isAbove ? 100 : (isBelow ? 30 : 50);
+        _vwapSubtitle = isBelow
+            ? (avwap != null ? "↓ Below AVWAP (${avwap.toStringAsFixed(1)})" : "↓ Below AVWAP")
+            : (avwap != null ? "↑ Above AVWAP (${avwap.toStringAsFixed(1)})" : "↑ Above AVWAP");
+
+        final pcrVal = (p2['pcr'] as num?)?.toDouble();
+        if (pcrVal != null) {
+          _pcr = pcrVal;
+        }
+        final bias = p2['market_bias']?.toString().replaceAll('_', ' ');
+        if (bias != null && bias.isNotEmpty && bias != 'null') {
+          _pcrAnalysis = bias;
+        }
       }
-    }
+
+      // Also get ultra-precise Option Chain PCR for NIFTY
+      final chain = await _api.getOptionChain('NIFTY');
+      if (chain.isNotEmpty) {
+        final chainPcr = (chain['pcr'] as num?)?.toDouble();
+        if (chainPcr != null) {
+          _pcr = chainPcr;
+        }
+        final resStrike = chain['resistance_strike'];
+        final supStrike = chain['support_strike'];
+        if (resStrike != null && supStrike != null) {
+          _pcrAnalysis = "Ceil ₹$resStrike · Floor ₹$supStrike";
+        } else if (chain['oi_bias'] != null) {
+          _pcrAnalysis = chain['oi_bias'].toString();
+        }
+      }
+    } catch (_) {}
 
     if (mounted) {
       setState(() {
@@ -198,11 +240,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildPulseCard(
             title: "MARKET SENTIMENT",
             mainValue: _marketSentiment,
-            valueColor: _marketSentiment == "BULLISH" ? TradeTheme.bullish : TradeTheme.bearish,
+            valueColor: _marketSentiment.contains("BULLISH")
+                ? TradeTheme.bullish
+                : (_marketSentiment.contains("BEARISH") ? TradeTheme.bearish : TradeTheme.accentOrange),
             icon: Icons.bolt,
-            iconBg: TradeTheme.accentOrange,
-            footer: "↑ $_vwapHoldPercent% Intraday VWAP Hold",
-            footerColor: TradeTheme.bullish,
+            iconBg: _marketSentiment.contains("BULLISH")
+                ? TradeTheme.bullish
+                : (_marketSentiment.contains("BEARISH") ? TradeTheme.bearish : TradeTheme.accentOrange),
+            footer: _vwapSubtitle,
+            footerColor: _isAboveVwap ? TradeTheme.bullish : TradeTheme.bearish,
           ),
           const SizedBox(width: 12),
 
@@ -210,11 +256,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           _buildPulseCard(
             title: "OPTION CHAIN PCR",
             mainValue: _pcr.toStringAsFixed(2),
-            valueColor: TradeTheme.textPrimary,
+            valueColor: _pcr >= 1.0 ? TradeTheme.bullish : TradeTheme.bearish,
             icon: Icons.track_changes,
-            iconBg: const Color(0xFF10B981),
-            footer: "↑ $_pcrAnalysis",
-            footerColor: TradeTheme.bullish,
+            iconBg: _pcr >= 1.0 ? const Color(0xFF10B981) : TradeTheme.bearish,
+            footer: "${_pcr >= 1.0 ? '↑' : '↓'} $_pcrAnalysis",
+            footerColor: _pcr >= 1.0 ? TradeTheme.bullish : TradeTheme.bearish,
           ),
           const SizedBox(width: 12),
 
@@ -225,7 +271,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             valueColor: _isScannerRunning ? const Color(0xFF38BDF8) : TradeTheme.textMuted,
             icon: Icons.cell_tower,
             iconBg: const Color(0xFF6366F1),
-            footer: "Strat E & F All FNO Universe",
+            footer: _signals.isNotEmpty ? "${_signals.length} Signals Active" : "Strat E & F All FNO Universe",
             footerColor: const Color(0xFF818CF8),
           ),
         ],

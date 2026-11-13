@@ -394,6 +394,23 @@ function renderOptionChain(chainData) {
   pcrBadge.className = 'badge ' + (pcrBias === 'BULLISH' ? 'badge-bullish' : (pcrBias === 'BEARISH' ? 'badge-bearish' : 'badge-neutral'));
   $('optPcrSub').textContent = `Weighted: ${(chainData.weighted_pcr != null && isFinite(chainData.weighted_pcr)) ? chainData.weighted_pcr.toFixed(2) : '—'}`;
 
+  // Also update top Argon KPI PCR Card
+  const kpiPcr = $('kpiPcrVal');
+  if (kpiPcr && pcr != null && isFinite(pcr)) {
+    kpiPcr.textContent = pcr.toFixed(2);
+  }
+  const kpiBias = $('kpiPcrBias');
+  if (kpiBias) {
+    kpiBias.textContent = (pcr >= 1.0 ? '↑ ' : '↓ ') + pcrBias;
+    kpiBias.className = 'argon-trend ' + (pcrBias === 'BULLISH' ? 'text-success' : (pcrBias === 'BEARISH' ? 'text-danger' : 'text-warning'));
+  }
+  const kpiW = $('kpiWalls');
+  if (kpiW) {
+    kpiW.textContent = (chainData.support_strike && chainData.resistance_strike)
+      ? `Floor ₹${chainData.support_strike} · Ceil ₹${chainData.resistance_strike}`
+      : (pcr >= 1.0 ? 'Put Writing Dominant' : 'Call Writing Dominant');
+  }
+
   // Resistance Wall (Ceiling)
   $('optResStrike').textContent = chainData.resistance_strike ? `₹${chainData.resistance_strike} CE` : '—';
   $('optResOi').textContent = chainData.resistance_oi ? `OI: ${Number(chainData.resistance_oi).toLocaleString()}` : 'OI: —';
@@ -1403,6 +1420,10 @@ async function syncLiveSignals() {
     if (scannerSignalCount) {
       scannerSignalCount.textContent = `${_scannerSignals.length} signal${_scannerSignals.length !== 1 ? 's' : ''}`;
     }
+    const kpiCount = $('kpiSignalsCount');
+    if (kpiCount) {
+      kpiCount.textContent = _scannerSignals.length > 0 ? `${_scannerSignals.length} Signals Active` : 'All FNO Universe';
+    }
   } catch (e) {}
 }
 setInterval(syncLiveSignals, 5000);
@@ -2263,6 +2284,57 @@ async function refreshSustainedBreakoutDashboard() {
     if (fPanelReasonsAgainst) {
       const list = p3.reasons_against || [];
       fPanelReasonsAgainst.innerHTML = list.map(r => `<div>✖ ${r}</div>`).join('');
+    }
+
+    // ── Update Top KPI Cards Dynamically ──
+    const kpiSent = $('kpiSentiment');
+    if (kpiSent) {
+      if (score >= 70 || p3.direction === 'LONG') {
+        kpiSent.textContent = `BULLISH (${score})`;
+        kpiSent.style.color = '#2dce89';
+      } else if ((score > 0 && score <= 35) || p3.direction === 'SHORT') {
+        kpiSent.textContent = `BEARISH (${score})`;
+        kpiSent.style.color = '#f5365c';
+      } else if (score > 0) {
+        kpiSent.textContent = `NEUTRAL (${score})`;
+        kpiSent.style.color = '#fb6340';
+      } else if (p1.spot_price != null) {
+        kpiSent.textContent = 'NEUTRAL';
+        kpiSent.style.color = '#fb6340';
+      }
+    }
+
+    const kpiVwap = $('kpiVwapStatus');
+    if (kpiVwap) {
+      const isBelow = p1.price_vs_avwap === 'BELOW';
+      const isAbove = p1.price_vs_avwap === 'ABOVE';
+      kpiVwap.textContent = isBelow ? '↓ Below AVWAP' : (isAbove ? '↑ Above AVWAP' : 'Intraday VWAP');
+      kpiVwap.className = 'argon-trend ' + (isAbove ? 'text-success' : (isBelow ? 'text-danger' : 'text-warning'));
+    }
+
+    const kpiAvwap = $('kpiAvwapVal');
+    if (kpiAvwap) {
+      if (p1.avwap != null) {
+        kpiAvwap.textContent = `AVWAP ₹${Number(p1.avwap).toFixed(2)}`;
+      } else if (p1.spot_price != null) {
+        kpiAvwap.textContent = `Spot ₹${Number(p1.spot_price).toFixed(2)}`;
+      }
+    }
+
+    if (p2.pcr != null) {
+      const kpiPcr = $('kpiPcrVal');
+      if (kpiPcr) kpiPcr.textContent = Number(p2.pcr).toFixed(2);
+      const kpiBias = $('kpiPcrBias');
+      if (kpiBias) {
+        const isBullPcr = p2.pcr >= 1.1;
+        const isBearPcr = p2.pcr <= 0.9;
+        kpiBias.textContent = isBullPcr ? '↑ Bullish' : (isBearPcr ? '↓ Bearish' : '→ Neutral');
+        kpiBias.className = 'argon-trend ' + (isBullPcr ? 'text-success' : (isBearPcr ? 'text-danger' : 'text-warning'));
+      }
+      const kpiW = $('kpiWalls');
+      if (kpiW) {
+        kpiW.textContent = p2.market_bias ? p2.market_bias.replace(/_/g, ' ') : (p2.pcr >= 1.0 ? 'Put Writing Dominant' : 'Call Writing Dominant');
+      }
     }
   } catch (e) {}
 }
