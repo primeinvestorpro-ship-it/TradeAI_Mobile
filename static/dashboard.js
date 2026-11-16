@@ -2152,9 +2152,22 @@ async function refreshSmartMoneyDashboard() {
 setInterval(refreshSmartMoneyDashboard, 15000);
 setTimeout(refreshSmartMoneyDashboard, 2000);
 
+let currentFScenario = '';
+let currentFSymbol = 'NIFTY';
+
+window.setFStrategyScenario = function(sc) {
+  currentFScenario = sc;
+  refreshSustainedBreakoutDashboard();
+};
+
 async function refreshSustainedBreakoutDashboard() {
   try {
-    const res = await fetch('/api/scanner/sustained_breakout');
+    const sel = $('fPanelSymbolSelect');
+    if (sel && sel.value) currentFSymbol = sel.value;
+    let url = `/api/scanner/sustained_breakout?symbol=${encodeURIComponent(currentFSymbol)}`;
+    if (currentFScenario) url += `&scenario=${encodeURIComponent(currentFScenario)}`;
+
+    const res = await fetch(url);
     const d = await res.json();
     if (!d.ok || !d.data) return;
 
@@ -2164,7 +2177,7 @@ async function refreshSustainedBreakoutDashboard() {
 
     // Panel 1: Market Trend
     const fPanelSpotPrice = $('fPanelSpotPrice');
-    if (fPanelSpotPrice) fPanelSpotPrice.textContent = `NIFTY: ₹${p1.spot_price != null ? Number(p1.spot_price).toFixed(2) : '—'}`;
+    if (fPanelSpotPrice) fPanelSpotPrice.textContent = `${p1.symbol || currentFSymbol}: ₹${p1.spot_price != null ? Number(p1.spot_price).toFixed(2) : '—'}`;
     const fPanelEmaVal = $('fPanelEmaVal');
     if (fPanelEmaVal) fPanelEmaVal.textContent = `${p1.ema10 ?? '—'} / ${p1.ema21 ?? '—'} / ${p1.ema50 ?? '—'}`;
     const fPanelEmaStatus = $('fPanelEmaStatus');

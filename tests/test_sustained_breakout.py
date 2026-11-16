@@ -228,3 +228,93 @@ def test_scanner_strategy_wrapper_f():
     assert "score" in res
     assert "values" in res
     assert res["values"]["spot_price"] == candles[-1]["close"]
+
+
+def test_dynamic_score_varies_with_price_action():
+    """Verify that score is truly dynamic and varies continuously with spot price movements."""
+    from sustained_breakout_strategy import generate_strategy_f_scenario
+    # Test ticks across channel: -15, 0, +15
+    d1 = generate_strategy_f_scenario("dynamic", "NIFTY", tick_offset=-15.0)
+    d2 = generate_strategy_f_scenario("dynamic", "NIFTY", tick_offset=0.0)
+    d3 = generate_strategy_f_scenario("dynamic", "NIFTY", tick_offset=15.0)
+
+    score1 = d1["trading_signal"]["confidence_score"]
+    score2 = d2["trading_signal"]["confidence_score"]
+    score3 = d3["trading_signal"]["confidence_score"]
+
+    # Scores must NOT be identical/frozen
+    assert len({score1, score2, score3}) > 1
+    assert score3 > score1, f"Expected score to increase with bullish price action: {score1} vs {score3}"
+
+
+def test_options_chain_separate_contract_format_pcr():
+    """Verify separate CE/PE contract objects calculate accurate PCR and don't default to 1.00."""
+    chain = [
+        {"strike": 25200, "instrument_type": "CE", "oi": 200000, "change_oi": -10000},
+        {"strike": 25200, "instrument_type": "PE", "oi": 400000, "change_oi": 50000},
+    ]
+    res_long = analyze_options_chain_confluence(chain, spot_price=25200.0, direction="LONG")
+    assert res_long["pcr"] == 2.0
+    assert res_long["bias"] == "BULLISH_CONFIRMED"
+    assert res_long["call_oi_total"] == 200000
+    assert res_long["put_oi_total"] == 400000
+    assert res_long["score"] == 10
+
+    # Opposite test: Heavy CE writing
+    chain_bear = [
+        {"strike": 25200, "instrument_type": "CE", "oi": 500000, "change_oi": 60000},
+        {"strike": 25200, "instrument_type": "PE", "oi": 250000, "change_oi": -5000},
+    ]
+    res_short = analyze_options_chain_confluence(chain_bear, spot_price=25200.0, direction="SHORT")
+    assert res_short["pcr"] == 0.5
+    assert res_short["bias"] == "BEARISH_CONFIRMED"
+    assert res_short["score"] == 10
+
+
+def test_scenario_generator_all_cases():
+    """Exhaustively test all Strategy F market scenarios."""
+    from sustained_breakout_strategy import generate_strategy_f_scenario
+
+    # Scenario 1: Bullish Breakout
+    bull = generate_strategy_f_scenario("bullish", "NIFTY")
+    assert bull["trading_signal"]["direction"] == "LONG"
+    assert bull["trading_signal"]["confidence_score"] >= 75
+    assert bull["trading_signal"]["passed"] is True
+    assert bull["derivatives"]["pcr"] >= 1.2
+
+    # Scenario 2: Bearish Breakdown
+    bear = generate_strategy_f_scenario("bearish", "NIFTY")
+    assert bear["trading_signal"]["direction"] == "SHORT"
+    assert bear["trading_signal"]["confidence_score"] >= 75
+    assert bear["trading_signal"]["passed"] is True
+    assert bear["derivatives"]["pcr"] <= 0.8
+
+    # Scenario 3: Neutral Rangebound
+    neutral = generate_strategy_f_scenario("neutral", "NIFTY", tick_offset=0.0)
+    assert neutral["trading_signal"]["direction"] == "NO TRADE"
+    assert 35 <= neutral["trading_signal"]["confidence_score"] <= 65
+
+    # Scenario 4: Safety Rule Invalidation
+    safety = generate_strategy_f_scenario("safety", "NIFTY")
+    assert safety["trading_signal"]["passed"] is False
+    assert safety["trading_signal"]["direction"] == "NO TRADE"
+    assert any("strictly invalidated" in r for r in safety["trading_signal"]["reasons_against"])
+
+
+def test_api_endpoint_scenario_support():
+    """Test app route handles ?scenario= and ?symbol= correctly."""
+    import app
+    client = app.app.test_client()
+
+    # Test bullish scenario
+    res_bull = client.get("/api/scanner/sustained_breakout?scenario=bullish&symbol=BANKNIFTY")
+    data_bull = res_bull.get_json()
+    assert data_bull["ok"] is True
+    assert data_bull["data"]["trading_signal"]["direction"] == "LONG"
+    assert data_bull["data"]["market_trend"]["symbol"] == "BANKNIFTY"
+
+    # Test dynamic ticking scenario
+    res_dyn = client.get("/api/scanner/sustained_breakout?scenario=dynamic&tick=12.5")
+    data_dyn = res_dyn.get_json()
+    assert data_dyn["ok"] is True
+    assert data_dyn["data"]["trading_signal"]["confidence_score"] > 0

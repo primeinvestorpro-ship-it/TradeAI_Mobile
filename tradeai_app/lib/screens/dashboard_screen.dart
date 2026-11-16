@@ -75,6 +75,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
 
     // Fetch dynamic live market trend, score and PCR from breakout & option chain
+    String newSentiment = _marketSentiment;
+    bool newAboveVwap = _isAboveVwap;
+    int newVwapHold = _vwapHoldPercent;
+    String newVwapSub = _vwapSubtitle;
+    double newPcr = _pcr;
+    String newPcrAnalysis = _pcrAnalysis;
+
     try {
       final breakout = await _api.getSustainedBreakout();
       if (breakout.isNotEmpty) {
@@ -86,31 +93,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final dir = p3['direction']?.toString().toUpperCase() ?? 'NO TRADE';
 
         if (score >= 70 || dir == 'LONG') {
-          _marketSentiment = "BULLISH ($score)";
+          newSentiment = "BULLISH ($score)";
         } else if ((score > 0 && score <= 35) || dir == 'SHORT') {
-          _marketSentiment = "BEARISH ($score)";
+          newSentiment = "BEARISH ($score)";
         } else if (score > 0) {
-          _marketSentiment = "NEUTRAL ($score)";
+          newSentiment = "NEUTRAL ($score)";
         } else {
-          _marketSentiment = "NEUTRAL";
+          newSentiment = "NEUTRAL";
         }
 
         final isBelow = p1['price_vs_avwap'] == 'BELOW';
         final isAbove = p1['price_vs_avwap'] == 'ABOVE';
-        _isAboveVwap = isAbove;
+        newAboveVwap = isAbove;
         final avwap = (p1['avwap'] as num?)?.toDouble();
-        _vwapHoldPercent = isAbove ? 100 : (isBelow ? 30 : 50);
-        _vwapSubtitle = isBelow
+        newVwapHold = isAbove ? 100 : (isBelow ? 30 : 50);
+        newVwapSub = isBelow
             ? (avwap != null ? "↓ Below AVWAP (${avwap.toStringAsFixed(1)})" : "↓ Below AVWAP")
             : (avwap != null ? "↑ Above AVWAP (${avwap.toStringAsFixed(1)})" : "↑ Above AVWAP");
 
         final pcrVal = (p2['pcr'] as num?)?.toDouble();
         if (pcrVal != null) {
-          _pcr = pcrVal;
+          newPcr = pcrVal;
         }
         final bias = p2['market_bias']?.toString().replaceAll('_', ' ');
         if (bias != null && bias.isNotEmpty && bias != 'null') {
-          _pcrAnalysis = bias;
+          newPcrAnalysis = bias;
         }
       }
 
@@ -119,14 +126,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (chain.isNotEmpty) {
         final chainPcr = (chain['pcr'] as num?)?.toDouble();
         if (chainPcr != null) {
-          _pcr = chainPcr;
+          newPcr = chainPcr;
         }
         final resStrike = chain['resistance_strike'];
         final supStrike = chain['support_strike'];
         if (resStrike != null && supStrike != null) {
-          _pcrAnalysis = "Ceil ₹$resStrike · Floor ₹$supStrike";
+          newPcrAnalysis = "Ceil ₹$resStrike · Floor ₹$supStrike";
         } else if (chain['oi_bias'] != null) {
-          _pcrAnalysis = chain['oi_bias'].toString();
+          newPcrAnalysis = chain['oi_bias'].toString();
         }
       }
     } catch (_) {}
@@ -135,6 +142,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
       setState(() {
         _isScannerRunning = running;
         _signals = signals;
+        _marketSentiment = newSentiment;
+        _isAboveVwap = newAboveVwap;
+        _vwapHoldPercent = newVwapHold;
+        _vwapSubtitle = newVwapSub;
+        _pcr = newPcr;
+        _pcrAnalysis = newPcrAnalysis;
       });
     }
   }

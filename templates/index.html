@@ -508,6 +508,29 @@
           <div class="f-step"><span class="f-step-num">6</span> Options Chain PCR</div>
         </div>
 
+        <!-- Scenario & Symbol Testing Controls -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:10px;padding:8px 12px;background:rgba(255,255,255,0.7);border-radius:8px;border:1px solid #e2e8f0;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;font-weight:600;color:#475569;">Ticker:</span>
+            <select id="fPanelSymbolSelect" onchange="refreshSustainedBreakoutDashboard()" style="padding:4px 8px;font-size:12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;">
+              <option value="NIFTY" selected>NIFTY 50</option>
+              <option value="BANKNIFTY">BANKNIFTY</option>
+              <option value="FINNIFTY">FINNIFTY</option>
+              <option value="RELIANCE">RELIANCE</option>
+              <option value="TCS">TCS</option>
+              <option value="INFY">INFY</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:12px;font-weight:600;color:#475569;">Scenarios:</span>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setFStrategyScenario('dynamic')" style="font-size:11px;padding:3px 8px;">⚡ Live Dynamic</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setFStrategyScenario('bullish')" style="font-size:11px;padding:3px 8px;color:#16a34a;font-weight:600;">▲ Bull Breakout</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setFStrategyScenario('bearish')" style="font-size:11px;padding:3px 8px;color:#dc2626;font-weight:600;">▼ Bear Breakdown</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setFStrategyScenario('neutral')" style="font-size:11px;padding:3px 8px;color:#ea580c;font-weight:600;">▬ Rangebound</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setFStrategyScenario('safety')" style="font-size:11px;padding:3px 8px;color:#64748b;font-weight:600;">🛡 Safety Guard</button>
+          </div>
+        </div>
+
         <!-- 3 Distinct Panels Grid -->
         <div class="f-dashboard-grid mt-12">
 

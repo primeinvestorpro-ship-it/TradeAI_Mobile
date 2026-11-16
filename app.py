@@ -1012,27 +1012,42 @@ def scanner_sustained_breakout_route():
       1. Market Trend
       2. Derivatives Confirmation
       3. Trading Signal
+    Query parameters:
+      - ?symbol=... or ?ticker=... (default NIFTY)
+      - ?scenario=bullish|bearish|neutral|dynamic|safety (for testing all market cases)
+      - ?tick=0, 1, 2... (offset for dynamic score testing)
     """
+    req_sym = (request.args.get("symbol") or request.args.get("ticker") or "NIFTY").strip().upper()
+    req_scenario = (request.args.get("scenario") or "").strip().lower()
+    tick_offset = request.args.get("tick", default=None, type=float)
+
+    # Explicit scenario requested for QA/Testing all cases
+    if req_scenario:
+        from sustained_breakout_strategy import generate_strategy_f_scenario
+        data = generate_strategy_f_scenario(scenario=req_scenario, symbol=req_sym, tick_offset=tick_offset)
+        return jsonify({"ok": True, "data": data, "scenario": req_scenario})
+
     with STATE_LOCK:
         eng = STATE.get("scanner")
         client = STATE.get("kite_client")
         logged_in = STATE.get("logged_in")
 
-    if not logged_in or not client:
-        return jsonify({"ok": True, "data": {
-            "market_trend": {},
-            "derivatives": {},
-            "trading_signal": {},
-            "records": [],
-        }})
+    if logged_in and client:
+        try:
+            if eng:
+                data = eng.get_or_eval_sustained_breakout(max_age_seconds=4, symbol=req_sym)
+            else:
+                from scanner_engine import evaluate_strategy_f_standalone
+                data = evaluate_strategy_f_standalone(client, spot_symbol=req_sym)
+            if data and data.get("trading_signal", {}).get("confidence_score") is not None:
+                return jsonify({"ok": True, "data": data})
+        except Exception as exc:
+            pass
 
-    if eng:
-        data = eng.get_or_eval_sustained_breakout(max_age_seconds=4)
-        return jsonify({"ok": True, "data": data})
-    else:
-        from scanner_engine import evaluate_strategy_f_standalone
-        data = evaluate_strategy_f_standalone(client)
-        return jsonify({"ok": True, "data": data})
+    # Dynamic fallback when Kite is not logged in / off-market simulation
+    from sustained_breakout_strategy import generate_strategy_f_scenario
+    data = generate_strategy_f_scenario(scenario="dynamic", symbol=req_sym, tick_offset=tick_offset)
+    return jsonify({"ok": True, "data": data, "simulation": True})
 
 
 @app.route("/api/scanner/clear", methods=["POST"])

@@ -208,6 +208,7 @@ def analyze_options_chain_confluence(
     """
     Analyzes Options Chain around ATM (+/- 2 strikes) for Put/Call writing,
     OI unwinding, PCR, and directional positioning.
+    Supports both combined strike objects and separate CE/PE contract rows.
     """
     if not options_chain:
         return {
@@ -218,66 +219,130 @@ def analyze_options_chain_confluence(
             "call_oi_change": 0,
             "put_oi_change": 0,
             "bias": "NEUTRAL",
-            "score": 0,
+            "score": 5,
             "desc": "Options chain data not available",
         }
 
-    # Sort strikes and find ATM
-    strikes = sorted(options_chain, key=lambda x: abs(float(x.get("strike", 0)) - spot_price))
-    near_strikes = strikes[:5]  # ATM +/- 2 strikes
+    # Aggregate by strike to handle both formats cleanly
+    strike_map: Dict[float, Dict[str, float]] = {}
+    for item in options_chain:
+        strike = float(item.get("strike", 0) or 0)
+        if strike <= 0:
+            continue
+        if strike not in strike_map:
+            strike_map[strike] = {
+                "strike": strike,
+                "ce_oi": 0.0,
+                "pe_oi": 0.0,
+                "ce_change_oi": 0.0,
+                "pe_change_oi": 0.0,
+            }
 
-    call_oi_total = sum(float(s.get("ce_oi", 0) or 0) for s in near_strikes)
-    put_oi_total = sum(float(s.get("pe_oi", 0) or 0) for s in near_strikes)
-    call_change = sum(float(s.get("ce_change_oi", 0) or 0) for s in near_strikes)
-    put_change = sum(float(s.get("pe_change_oi", 0) or 0) for s in near_strikes)
+        # Check if already grouped format
+        if "ce_oi" in item or "pe_oi" in item:
+            strike_map[strike]["ce_oi"] += float(item.get("ce_oi", 0) or 0)
+            strike_map[strike]["pe_oi"] += float(item.get("pe_oi", 0) or 0)
+            strike_map[strike]["ce_change_oi"] += float(item.get("ce_change_oi", 0) or 0)
+            strike_map[strike]["pe_change_oi"] += float(item.get("pe_change_oi", 0) or 0)
+        else:
+            # Separate contract format (instrument_type: "CE" | "PE")
+            itype = item.get("instrument_type")
+            oi_val = float(item.get("oi", 0) or 0)
+            chg_val = float(item.get("change_oi", 0) or item.get("oi_change", 0) or 0)
+            if itype == "CE":
+                strike_map[strike]["ce_oi"] += oi_val
+                strike_map[strike]["ce_change_oi"] += chg_val
+            elif itype == "PE":
+                strike_map[strike]["pe_oi"] += oi_val
+                strike_map[strike]["pe_change_oi"] += chg_val
+
+    if not strike_map:
+        return {
+            "status": "UNAVAILABLE",
+            "pcr": None,
+            "call_oi_total": 0,
+            "put_oi_total": 0,
+            "call_oi_change": 0,
+            "put_oi_change": 0,
+            "bias": "NEUTRAL",
+            "score": 5,
+            "desc": "Options chain strikes unavailable",
+        }
+
+    # Sort strikes by proximity to spot_price and select nearest 5 strikes (ATM +/- 2)
+    sorted_strikes = sorted(strike_map.values(), key=lambda x: abs(x["strike"] - spot_price))
+    near_strikes = sorted_strikes[:5]
+
+    call_oi_total = sum(s["ce_oi"] for s in near_strikes)
+    put_oi_total = sum(s["pe_oi"] for s in near_strikes)
+    call_change = sum(s["ce_change_oi"] for s in near_strikes)
+    put_change = sum(s["pe_change_oi"] for s in near_strikes)
 
     pcr = round(put_oi_total / call_oi_total, 2) if call_oi_total > 0 else 1.0
 
-    # Bullish options setup: Put writing > Call writing (or Call unwinding)
-    is_bull_opts = (put_change > call_change and put_change > 0) or (call_change < 0 and put_change >= 0) or (pcr > 1.1)
-    # Bearish options setup: Call writing > Put writing (or Put unwinding)
-    is_bear_opts = (call_change > put_change and call_change > 0) or (put_change < 0 and call_change >= 0) or (pcr < 0.9)
-
-    score = 0
-    bias = "NEUTRAL"
-    desc = "Mixed options positioning"
-
+    # Smooth dynamic options scoring (0 - 10 points)
     if direction == "LONG":
-        if is_bull_opts:
-            score = 10
+        if pcr >= 1.3:
+            base_score = 10.0
+        elif pcr <= 0.7:
+            base_score = 1.0
+        else:
+            # Linear smooth scaling between 0.7 and 1.3
+            base_score = 1.0 + ((pcr - 0.7) / (1.3 - 0.7)) * 9.0
+
+        # dOI boost: put writing dominant
+        if put_change > call_change and put_change > 0:
+            base_score = min(10.0, base_score + 1.0)
+        elif call_change > put_change and call_change > 0:
+            base_score = max(0.0, base_score - 1.5)
+
+        opt_score = int(round(min(10.0, max(0.0, base_score))))
+
+        if pcr >= 1.1 or (put_change > call_change and put_change > 0):
             bias = "BULLISH_CONFIRMED"
             desc = f"Put writing dominant (PE dOI: {int(put_change)} vs CE dOI: {int(call_change)}), PCR: {pcr}"
-        elif not is_bear_opts:
-            score = 5
-            bias = "NEUTRAL"
-            desc = f"Neutral options positioning, PCR: {pcr}"
-        else:
-            score = 0
+        elif pcr <= 0.85 or (call_change > put_change and call_change > 0):
             bias = "BEARISH_DIVERGENCE"
             desc = f"Heavy Call writing overhead (CE dOI: {int(call_change)}), opposing LONG"
-    elif direction == "SHORT":
-        if is_bear_opts:
-            score = 10
-            bias = "BEARISH_CONFIRMED"
-            desc = f"Call writing dominant (CE dOI: {int(call_change)} vs PE dOI: {int(put_change)}), PCR: {pcr}"
-        elif not is_bull_opts:
-            score = 5
+        else:
             bias = "NEUTRAL"
             desc = f"Neutral options positioning, PCR: {pcr}"
+
+    else:  # SHORT
+        if pcr <= 0.7:
+            base_score = 10.0
+        elif pcr >= 1.3:
+            base_score = 1.0
         else:
-            score = 0
+            # Linear smooth inverse scaling
+            base_score = 1.0 + ((1.3 - pcr) / (1.3 - 0.7)) * 9.0
+
+        if call_change > put_change and call_change > 0:
+            base_score = min(10.0, base_score + 1.0)
+        elif put_change > call_change and put_change > 0:
+            base_score = max(0.0, base_score - 1.5)
+
+        opt_score = int(round(min(10.0, max(0.0, base_score))))
+
+        if pcr <= 0.9 or (call_change > put_change and call_change > 0):
+            bias = "BEARISH_CONFIRMED"
+            desc = f"Call writing dominant (CE dOI: {int(call_change)} vs PE dOI: {int(put_change)}), PCR: {pcr}"
+        elif pcr >= 1.15 or (put_change > call_change and put_change > 0):
             bias = "BULLISH_DIVERGENCE"
             desc = f"Heavy Put writing support (PE dOI: {int(put_change)}), opposing SHORT"
+        else:
+            bias = "NEUTRAL"
+            desc = f"Neutral options positioning, PCR: {pcr}"
 
     return {
         "status": "AVAILABLE",
         "pcr": pcr,
-        "call_oi_total": call_oi_total,
-        "put_oi_total": put_oi_total,
-        "call_oi_change": call_change,
-        "put_oi_change": put_change,
+        "call_oi_total": int(call_oi_total),
+        "put_oi_total": int(put_oi_total),
+        "call_oi_change": int(call_change),
+        "put_oi_change": int(put_change),
         "bias": bias,
-        "score": score,
+        "score": opt_score,
         "desc": desc,
     }
 
@@ -297,93 +362,141 @@ def calculate_confluence_score(
     direction: str,
 ) -> Tuple[int, Dict[str, int]]:
     """
-    Weighted 100-Point Scoring Model:
-      - EMA trend alignment: 15
-      - Supertrend confirmation: 10
-      - AVWAP confirmation: 10
-      - Breakout/breakdown sustainability: 20
-      - Volume confirmation: 15
-      - Futures price & OI confirmation: 15
-      - Options-chain confirmation: 10
+    Weighted 100-Point Dynamic Confluence Model:
+      - EMA trend alignment & spacing: 15
+      - Supertrend confirmation & buffer: 10
+      - AVWAP confirmation & expansion: 10
+      - Breakout/breakdown sustainability & channel position: 20
+      - Volume expansion factor: 15
+      - Futures price, OI & basis: 15
+      - Options-chain PCR & writing: 10
       - Market structure & R:R: 5
     """
     breakdown: Dict[str, int] = {}
+    curr_p = float(breakout_data.get("curr_close") or 0.0)
 
-    # 1. EMA Trend Alignment (15 pts)
-    # EMA 10, EMA 21, EMA 50 stacked and rising/declining
-    ema_score = 0
+    # 1. EMA Trend Alignment & Spacing (15 pts)
+    ema_score = 0.0
+    ema10 = float(ema_data.get("ema10") or 0.0)
+    ema21 = float(ema_data.get("ema21") or 0.0)
+    ema50 = float(ema_data.get("ema50") or 0.0)
+    if curr_p <= 0.0:
+        curr_p = ema10
+
     if direction == "LONG":
-        if ema_data["stacked_bull"]:
-            ema_score += 10
-        if ema_data["rising"]:
-            ema_score += 5
+        if curr_p > ema10:
+            ema_score += 4.0
+        if ema10 > ema21:
+            ema_score += 4.0
+        if ema21 > ema50:
+            ema_score += 4.0
+        if ema_data.get("rising"):
+            ema_score += 3.0
     else:
-        if ema_data["stacked_bear"]:
-            ema_score += 10
-        if ema_data["declining"]:
-            ema_score += 5
-    breakdown["ema_trend"] = ema_score
+        if curr_p < ema10:
+            ema_score += 4.0
+        if ema10 < ema21:
+            ema_score += 4.0
+        if ema21 < ema50:
+            ema_score += 4.0
+        if ema_data.get("declining"):
+            ema_score += 3.0
+    breakdown["ema_trend"] = int(round(ema_score))
 
-    # 2. Supertrend Confirmation (10 pts)
-    st_score = 0
-    if direction == "LONG" and st_data["trend"] == "UP":
-        st_score = 10
-    elif direction == "SHORT" and st_data["trend"] == "DOWN":
-        st_score = 10
-    breakdown["supertrend"] = st_score
+    # 2. Supertrend Confirmation & Clearance (10 pts)
+    st_score = 0.0
+    st_trend = st_data.get("trend")
+    st_val = float(st_data.get("val") or 0.0)
+    if direction == "LONG" and st_trend == "UP":
+        st_score = 7.0
+        if st_val > 0 and curr_p > st_val:
+            dist_pct = (curr_p - st_val) / st_val * 100.0
+            st_score += min(3.0, max(0.5, dist_pct * 3.0))
+    elif direction == "SHORT" and st_trend == "DOWN":
+        st_score = 7.0
+        if st_val > 0 and curr_p < st_val:
+            dist_pct = (st_val - curr_p) / st_val * 100.0
+            st_score += min(3.0, max(0.5, dist_pct * 3.0))
+    breakdown["supertrend"] = int(round(st_score))
 
-    # 3. AVWAP Confirmation (10 pts)
-    avwap_score = 0
-    if direction == "LONG" and avwap_data["above_avwap"]:
-        avwap_score = 10
-    elif direction == "SHORT" and avwap_data["below_avwap"]:
-        avwap_score = 10
-    breakdown["avwap"] = avwap_score
+    # 3. AVWAP Confirmation & Expansion (10 pts)
+    av_val = float(avwap_data.get("avwap") or 0.0)
+    avwap_score = 0.0
+    if direction == "LONG":
+        if avwap_data.get("above_avwap") and av_val > 0:
+            dist_pct = (curr_p - av_val) / av_val * 100.0
+            avwap_score = 5.0 + min(5.0, max(0.5, dist_pct * 10.0))
+        elif av_val > 0 and abs(curr_p - av_val) / av_val <= 0.001:
+            avwap_score = 2.0
+    else:
+        if avwap_data.get("below_avwap") and av_val > 0:
+            dist_pct = (av_val - curr_p) / av_val * 100.0
+            avwap_score = 5.0 + min(5.0, max(0.5, dist_pct * 10.0))
+        elif av_val > 0 and abs(curr_p - av_val) / av_val <= 0.001:
+            avwap_score = 2.0
+    breakdown["avwap"] = int(round(avwap_score))
 
-    # 4. Breakout / Breakdown Sustainability (20 pts)
-    bo_score = 0
-    if breakout_data["sustained"]:
-        bo_score += 15
+    # 4. Breakout / Breakdown Sustainability & Range Position (20 pts)
+    bo_score = 0.0
+    res = float(breakout_data.get("resistance") or 0.0)
+    sup = float(breakout_data.get("support") or 0.0)
+    if breakout_data.get("sustained"):
+        bo_score = 15.0
         if breakout_data.get("retest_confirmed"):
-            bo_score += 5
+            bo_score += 5.0
         elif breakout_data.get("holds_above_or_below"):
-            bo_score += 5
-    breakdown["sustainability"] = bo_score
+            bo_score += 5.0
+    elif res > sup and curr_p > 0:
+        channel_span = res - sup
+        if channel_span > 0:
+            pos_ratio = (curr_p - sup) / channel_span
+            pos_ratio = max(0.0, min(1.0, pos_ratio))
+            if direction == "LONG":
+                bo_score = pos_ratio * 10.0
+            else:
+                bo_score = (1.0 - pos_ratio) * 10.0
+    breakdown["sustainability"] = int(round(bo_score))
 
     # 5. Volume Confirmation (15 pts)
-    vol_score = 0
-    ratio = volume_data.get("vol_ratio", 0.0)
+    ratio = float(volume_data.get("vol_ratio", 0.0) or 0.0)
     if ratio >= 1.5:
-        vol_score = 15
-    elif ratio >= 1.2:
-        vol_score = 10
-    elif ratio >= 1.0:
-        vol_score = 5
-    breakdown["volume"] = vol_score
+        vol_score = 15.0
+    elif ratio > 0.0:
+        vol_score = min(15.0, ratio * 10.0)
+    else:
+        vol_score = 0.0
+    breakdown["volume"] = int(round(vol_score))
 
-    # 6. Futures Price & OI Confirmation (15 pts)
-    fut_score = 0
+    # 6. Futures Price, OI & Basis (15 pts)
+    fut_score = 0.0
     buildup = futures_data.get("buildup")
+    fut_p = float(futures_data.get("futures_price") or curr_p)
+    basis = fut_p - curr_p
+
     if direction == "LONG":
         if buildup == "LONG_BUILDUP":
-            fut_score = 15
+            fut_score = 12.0
         elif buildup == "SHORT_COVERING":
-            fut_score = 10
+            fut_score = 8.0
+        if curr_p > 0 and basis > 0:
+            fut_score += min(3.0, max(0.5, basis / curr_p * 1000.0))
     else:
         if buildup == "SHORT_BUILDUP":
-            fut_score = 15
+            fut_score = 12.0
         elif buildup == "LONG_UNWINDING":
-            fut_score = 8
-    breakdown["futures_oi"] = fut_score
+            fut_score = 8.0
+        if curr_p > 0 and basis < 0:
+            fut_score += min(3.0, max(0.5, abs(basis) / curr_p * 1000.0))
+    breakdown["futures_oi"] = int(round(fut_score))
 
     # 7. Options-Chain Confirmation (10 pts)
-    breakdown["options_chain"] = options_data.get("score", 0)
+    breakdown["options_chain"] = int(round(options_data.get("score", 0)))
 
     # 8. Market Structure & Risk/Reward (5 pts)
-    rr_score = 5 if breakout_data.get("rr_valid", True) else 0
+    rr_score = 5 if breakout_data.get("rr_valid", True) else 2
     breakdown["market_structure"] = rr_score
 
-    total_score = sum(breakdown.values())
+    total_score = min(100, max(0, int(round(sum(breakdown.values())))))
     return total_score, breakdown
 
 
@@ -451,9 +564,13 @@ def evaluate_sustained_breakout_strategy(
                     c_copy["volume"] = futures_candles_5m[fut_idx].get("volume", 0)
         eval_candles.append(c_copy)
 
+    curr_close = float(spot_price) if (spot_price and spot_price > 0) else float(eval_candles[-1]["close"])
+    if spot_price and spot_price > 0:
+        eval_candles[-1]["close"] = curr_close
+        eval_candles[-1]["high"] = max(float(eval_candles[-1].get("high", curr_close)), curr_close)
+        eval_candles[-1]["low"] = min(float(eval_candles[-1].get("low", curr_close)), curr_close)
     closes = [float(c["close"]) for c in eval_candles]
     last_candle = eval_candles[-1]
-    curr_close = float(spot_price) if (spot_price and spot_price > 0) else last_candle["close"]
 
     # --- SAFETY RULE: Volume & Data Availability Check ---
     last_vol = float(last_candle.get("volume", 0) or 0)
@@ -586,6 +703,9 @@ def evaluate_sustained_breakout_strategy(
         "holds_above_or_below": curr_close > res_level,
         "retest_confirmed": bull_bo_details.get("retest_success", False),
         "rr_valid": (long_t1 - curr_close) / long_risk >= 1.4,
+        "resistance": res_level,
+        "support": sup_level,
+        "curr_close": curr_close,
     }
 
     short_breakout_data = {
@@ -594,6 +714,9 @@ def evaluate_sustained_breakout_strategy(
         "holds_above_or_below": curr_close < sup_level,
         "retest_confirmed": bear_bo_details.get("retest_failed", False),
         "rr_valid": (curr_close - short_t1) / short_risk >= 1.4,
+        "resistance": res_level,
+        "support": sup_level,
+        "curr_close": curr_close,
     }
 
     # Calculate Long and Short Confluence Scores
@@ -719,7 +842,7 @@ def evaluate_sustained_breakout_strategy(
         "avwap_data": avwap_data,
         "volume_data": volume_data,
         "futures_data": futures_data,
-        "options_data": opt_long if direction == "LONG" else opt_short,
+        "options_data": opt_long if (direction == "LONG" or long_score >= short_score) else opt_short,
         "breakdown": breakdown,
         "resistance": res_level,
         "support": sup_level,
@@ -780,4 +903,262 @@ def evaluate_sustained_breakout_strategy(
         "values": values,
         "reasons_for": reasons_for,
         "reasons_against": reasons_against,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Scenario Generator & Multi-Scenario Simulation Engine
+# ---------------------------------------------------------------------------
+
+def generate_strategy_f_scenario(scenario: str = "dynamic", symbol: str = "NIFTY", tick_offset: Optional[float] = None) -> Dict:
+    """
+    Generates realistic market scenarios for Strategy F to test all cases:
+      - 'bullish': Confirmed Long Breakout with high volume & Put writing (score ~85-95)
+      - 'bearish': Confirmed Short Breakdown with high volume & Call writing (score ~85-95)
+      - 'neutral': Range-bound consolidation within channel (score ~45-55)
+      - 'dynamic': Real-time ticking scenario where score and levels smoothly vary on every tick
+      - 'safety': Volume and OI unavailable to test safety invalidation
+    """
+    now = datetime.datetime.now()
+    sc = (scenario or "dynamic").lower()
+
+    if tick_offset is None:
+        # Generate cyclic offset based on seconds: 0 to 20 points
+        second = now.second + (now.microsecond / 1_000_000.0)
+        tick_offset = math.sin(second * 0.2) * 15.0
+
+    # Base price level
+    base_price = 25200.0 if symbol == "NIFTY" else (52000.0 if symbol == "BANKNIFTY" else 2800.0)
+    res_level = base_price + 50.0
+    sup_level = base_price - 50.0
+
+    candles: List[Dict] = []
+    num_candles = 60
+
+    if sc in ("bullish", "long", "bull"):
+        # Uptrend into breakout
+        for i in range(num_candles - 2):
+            p = base_price - 20.0 + (i * 0.8)
+            candles.append({
+                "date": now - datetime.timedelta(minutes=5 * (num_candles - i)),
+                "open": round(p - 2.0, 2),
+                "high": round(p + 3.0, 2),
+                "low": round(p - 3.0, 2),
+                "close": round(p, 2),
+                "volume": 60000,
+            })
+        # Breakout candle
+        c_bo_p = res_level + 10.0
+        candles.append({
+            "date": now - datetime.timedelta(minutes=5),
+            "open": round(res_level - 1.0, 2),
+            "high": round(c_bo_p + 4.0, 2),
+            "low": round(res_level - 2.0, 2),
+            "close": c_bo_p,
+            "volume": 140000,
+        })
+        # Sustained candle
+        c_sust_p = c_bo_p + 8.0 + tick_offset
+        candles.append({
+            "date": now,
+            "open": c_bo_p,
+            "high": round(c_sust_p + 5.0, 2),
+            "low": round(c_bo_p - 1.0, 2),
+            "close": c_sust_p,
+            "volume": 150000,
+        })
+        spot_p = c_sust_p
+        fut_p = spot_p + 18.0
+        prev_fut_p = spot_p + 6.0
+        curr_oi = 1500000
+        prev_oi = 1350000
+        fut_vol = 180000
+        # High Put Writing, PCR > 1.3
+        atm = round(spot_p / 50.0) * 50.0
+        options_chain = [
+            {"strike": atm - 50, "instrument_type": "CE", "oi": 80000, "change_oi": -5000, "volume": 20000, "last_price": 140.0},
+            {"strike": atm - 50, "instrument_type": "PE", "oi": 250000, "change_oi": 60000, "volume": 70000, "last_price": 30.0},
+            {"strike": atm, "instrument_type": "CE", "oi": 150000, "change_oi": -10000, "volume": 50000, "last_price": 85.0},
+            {"strike": atm, "instrument_type": "PE", "oi": 320000, "change_oi": 85000, "volume": 90000, "last_price": 55.0},
+            {"strike": atm + 50, "instrument_type": "CE", "oi": 200000, "change_oi": 12000, "volume": 60000, "last_price": 45.0},
+            {"strike": atm + 50, "instrument_type": "PE", "oi": 280000, "change_oi": 40000, "volume": 65000, "last_price": 95.0},
+        ]
+
+    elif sc in ("bearish", "short", "bear"):
+        # Downtrend into breakdown
+        for i in range(num_candles - 2):
+            p = base_price + 20.0 - (i * 0.8)
+            candles.append({
+                "date": now - datetime.timedelta(minutes=5 * (num_candles - i)),
+                "open": round(p + 2.0, 2),
+                "high": round(p + 3.0, 2),
+                "low": round(p - 3.0, 2),
+                "close": round(p, 2),
+                "volume": 60000,
+            })
+        # Breakdown candle
+        c_bd_p = sup_level - 10.0
+        candles.append({
+            "date": now - datetime.timedelta(minutes=5),
+            "open": round(sup_level + 1.0, 2),
+            "high": round(sup_level + 2.0, 2),
+            "low": round(c_bd_p - 4.0, 2),
+            "close": c_bd_p,
+            "volume": 140000,
+        })
+        # Sustained candle
+        c_sust_p = c_bd_p - 8.0 - abs(tick_offset)
+        candles.append({
+            "date": now,
+            "open": c_bd_p,
+            "high": round(c_bd_p + 1.0, 2),
+            "low": round(c_sust_p - 5.0, 2),
+            "close": c_sust_p,
+            "volume": 150000,
+        })
+        spot_p = c_sust_p
+        fut_p = spot_p - 18.0
+        prev_fut_p = spot_p - 6.0
+        curr_oi = 1500000
+        prev_oi = 1350000
+        fut_vol = 180000
+        # High Call Writing, PCR < 0.7
+        atm = round(spot_p / 50.0) * 50.0
+        options_chain = [
+            {"strike": atm - 50, "instrument_type": "CE", "oi": 300000, "change_oi": 75000, "volume": 70000, "last_price": 95.0},
+            {"strike": atm - 50, "instrument_type": "PE", "oi": 120000, "change_oi": -8000, "volume": 30000, "last_price": 45.0},
+            {"strike": atm, "instrument_type": "CE", "oi": 350000, "change_oi": 95000, "volume": 85000, "last_price": 55.0},
+            {"strike": atm, "instrument_type": "PE", "oi": 140000, "change_oi": -12000, "volume": 40000, "last_price": 85.0},
+            {"strike": atm + 50, "instrument_type": "CE", "oi": 260000, "change_oi": 50000, "volume": 60000, "last_price": 25.0},
+            {"strike": atm + 50, "instrument_type": "PE", "oi": 70000, "change_oi": -15000, "volume": 20000, "last_price": 140.0},
+        ]
+
+    elif sc in ("safety", "invalidation", "safety_rule"):
+        for i in range(num_candles):
+            p = base_price + math.sin(i * 0.3) * 15.0
+            candles.append({
+                "date": now - datetime.timedelta(minutes=5 * (num_candles - i)),
+                "open": round(p - 1.0, 2),
+                "high": round(p + 2.0, 2),
+                "low": round(p - 2.0, 2),
+                "close": round(p, 2),
+                "volume": 0,  # Zero volume trigger
+            })
+        spot_p = base_price
+        fut_p = base_price
+        prev_fut_p = base_price
+        curr_oi = 0  # Zero OI trigger
+        prev_oi = 0
+        fut_vol = 0
+        options_chain = []
+
+    else:
+        # Dynamic / Rangebound scenario with live ticking modulation
+        for i in range(num_candles):
+            cycle = math.sin(i * 0.25) * 25.0
+            p = base_price + cycle
+            candles.append({
+                "date": now - datetime.timedelta(minutes=5 * (num_candles - i)),
+                "open": round(p - 1.5, 2),
+                "high": round(p + 3.0, 2),
+                "low": round(p - 3.0, 2),
+                "close": round(p, 2),
+                "volume": 50000 + int(abs(math.cos(i * 0.2)) * 35000),
+            })
+        spot_p = round(base_price + tick_offset, 2)
+        candles[-1]["close"] = spot_p
+        candles[-1]["high"] = max(candles[-1]["high"], spot_p)
+        candles[-1]["low"] = min(candles[-1]["low"], spot_p)
+        fut_p = round(spot_p + (tick_offset * 0.3), 2)
+        prev_fut_p = spot_p - 2.0
+        curr_oi = 1250000 + int(tick_offset * 5000)
+        prev_oi = 1200000
+        vol_factor = max(0.6, min(1.8, 1.0 + (tick_offset / 30.0)))
+        fut_vol = int(90000 * vol_factor)
+        atm = round(spot_p / 50.0) * 50.0
+        # Dynamic PCR varying between 0.85 and 1.35
+        pcr_factor = max(0.7, min(1.4, 1.05 + (tick_offset / 40.0)))
+        pe_base = int(220000 * pcr_factor)
+        ce_base = 220000
+        options_chain = [
+            {"strike": atm - 50, "instrument_type": "CE", "oi": 180000, "change_oi": 15000, "volume": 40000, "last_price": 110.0},
+            {"strike": atm - 50, "instrument_type": "PE", "oi": int(180000 * pcr_factor), "change_oi": 25000, "volume": 50000, "last_price": 40.0},
+            {"strike": atm, "instrument_type": "CE", "oi": ce_base, "change_oi": 20000, "volume": 60000, "last_price": 70.0},
+            {"strike": atm, "instrument_type": "PE", "oi": pe_base, "change_oi": int(20000 * pcr_factor), "volume": 65000, "last_price": 68.0},
+            {"strike": atm + 50, "instrument_type": "CE", "oi": 240000, "change_oi": 30000, "volume": 55000, "last_price": 38.0},
+            {"strike": atm + 50, "instrument_type": "PE", "oi": int(240000 * pcr_factor), "change_oi": 15000, "volume": 45000, "last_price": 105.0},
+        ]
+
+    # Evaluate Strategy F
+    result = evaluate_sustained_breakout_strategy(
+        candles_5m=candles,
+        symbol=symbol,
+        spot_price=spot_p,
+        futures_symbol=f"{symbol}26NOVFUT",
+        futures_price=fut_p,
+        prev_futures_price=prev_fut_p,
+        futures_volume=fut_vol,
+        current_oi=curr_oi,
+        prev_oi=prev_oi,
+        options_chain=options_chain,
+        candle_ts=now,
+    )
+
+    v = result.get("values", {})
+    ema_aligned = v.get("ema_data", {}).get("stacked_bull") or v.get("ema_data", {}).get("stacked_bear")
+    price_vs_avwap = "ABOVE" if v.get("avwap_data", {}).get("above_avwap") else ("BELOW" if v.get("avwap_data", {}).get("below_avwap") else "AT VWAP")
+    fut_chg = round(((fut_p - prev_fut_p) / prev_fut_p * 100), 2) if prev_fut_p else 0.0
+    oi_chg = round(((curr_oi - prev_oi) / prev_oi * 100), 2) if prev_oi else 0.0
+
+    return {
+        "market_trend": {
+            "symbol": symbol,
+            "spot_price": v.get("spot_price"),
+            "ema10": v.get("ema_data", {}).get("ema10"),
+            "ema21": v.get("ema_data", {}).get("ema21"),
+            "ema50": v.get("ema_data", {}).get("ema50"),
+            "ema_aligned": ema_aligned,
+            "supertrend": v.get("supertrend_data", {}).get("val"),
+            "supertrend_trend": v.get("supertrend_data", {}).get("trend"),
+            "avwap": v.get("avwap_data", {}).get("avwap"),
+            "price_vs_avwap": price_vs_avwap,
+            "resistance": v.get("resistance"),
+            "support": v.get("support"),
+            "volume": v.get("volume_data", {}).get("current_vol"),
+            "volume_ma": v.get("volume_data", {}).get("vol_ma20"),
+            "volume_ratio": v.get("volume_data", {}).get("vol_ratio"),
+            "volume_valid": (v.get("volume_data", {}).get("current_vol", 0) or 0) > 0,
+        },
+        "derivatives": {
+            "futures_symbol": f"{symbol}26NOVFUT",
+            "futures_price": v.get("futures_data", {}).get("futures_price"),
+            "futures_change_pct": fut_chg,
+            "futures_volume": v.get("futures_data", {}).get("futures_volume"),
+            "current_oi": v.get("futures_data", {}).get("current_oi"),
+            "oi_change_pct": oi_chg,
+            "buildup": v.get("futures_data", {}).get("buildup"),
+            "call_oi": v.get("options_data", {}).get("call_oi_total"),
+            "put_oi": v.get("options_data", {}).get("put_oi_total"),
+            "pcr": v.get("options_data", {}).get("pcr"),
+            "market_bias": v.get("options_data", {}).get("bias"),
+            "oi_valid": (curr_oi is not None and curr_oi > 0),
+        },
+        "trading_signal": {
+            "symbol": symbol,
+            "direction": result.get("direction"),
+            "confidence_score": result.get("score"),
+            "setup_status": result.get("setup_status"),
+            "passed": result.get("passed"),
+            "entry_price": v.get("entry_price"),
+            "stop_loss": v.get("stop_loss"),
+            "target1": v.get("target1"),
+            "target2": v.get("target2"),
+            "risk_reward": v.get("risk_reward"),
+            "breakout_level": v.get("breakout_level"),
+            "reasons_for": result.get("reasons_for", []),
+            "reasons_against": result.get("reasons_against", []),
+            "breakdown": v.get("breakdown", {}),
+            "timestamp": now.isoformat(),
+        },
+        "records": [result],
     }

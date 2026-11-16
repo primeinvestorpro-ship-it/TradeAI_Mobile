@@ -342,12 +342,13 @@ class ScannerEngine:
                 "records": list(self._sustained_breakout_data.get("records", [])),
             }
 
-    def get_or_eval_sustained_breakout(self, max_age_seconds=4):
+    def get_or_eval_sustained_breakout(self, max_age_seconds=4, symbol="NIFTY"):
         now = datetime.datetime.now()
         is_stale = True
         with self._lock:
             ts_str = self._sustained_breakout_data.get("trading_signal", {}).get("timestamp")
-            if ts_str:
+            cached_sym = self._sustained_breakout_data.get("trading_signal", {}).get("symbol")
+            if ts_str and cached_sym == symbol:
                 try:
                     dt = datetime.datetime.fromisoformat(ts_str)
                     if (now - dt).total_seconds() < max_age_seconds:
@@ -356,7 +357,7 @@ class ScannerEngine:
                     pass
         if is_stale:
             try:
-                self._eval_strategy_f()
+                self._eval_strategy_f(spot_symbol=symbol)
             except Exception as exc:
                 self.log(f"[scanner] eval_strategy_f on-demand note: {exc!r}")
         return self.get_sustained_breakout_dashboard()

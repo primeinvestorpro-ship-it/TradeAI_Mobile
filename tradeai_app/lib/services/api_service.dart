@@ -138,9 +138,14 @@ class ApiService {
     return {};
   }
 
-  Future<Map<String, dynamic>> getSustainedBreakout() async {
+  Future<Map<String, dynamic>> getSustainedBreakout({String? symbol, String? scenario}) async {
     try {
-      final resp = await http.get(_uri('/api/scanner/sustained_breakout')).timeout(const Duration(seconds: 6));
+      String path = '/api/scanner/sustained_breakout';
+      final params = <String>[];
+      if (symbol != null && symbol.isNotEmpty) params.add('symbol=${Uri.encodeComponent(symbol)}');
+      if (scenario != null && scenario.isNotEmpty) params.add('scenario=${Uri.encodeComponent(scenario)}');
+      if (params.isNotEmpty) path += '?${params.join('&')}';
+      final resp = await http.get(_uri(path)).timeout(const Duration(seconds: 6));
       if (resp.statusCode == 200) {
         final data = jsonDecode(resp.body);
         return (data['data'] as Map<String, dynamic>?) ?? {};
