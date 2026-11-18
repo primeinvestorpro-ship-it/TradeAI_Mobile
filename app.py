@@ -927,6 +927,8 @@ def scanner_start():
         settings["scanner_enabled_e"] = bool(incoming["enabled_e"])
     if "enabled_f" in incoming:
         settings["scanner_enabled_f"] = bool(incoming["enabled_f"])
+    if "enabled_g" in incoming:
+        settings["scanner_enabled_g"] = bool(incoming["enabled_g"])
     if "max_lot_size" in incoming:
         try:
             settings["scanner_max_lot_size"] = int(incoming["max_lot_size"])
@@ -1085,6 +1087,53 @@ def scanner_sustained_breakout_route():
     # Dynamic fallback when Kite is not logged in / off-market simulation
     from sustained_breakout_strategy import generate_strategy_f_scenario
     data = generate_strategy_f_scenario(scenario="dynamic", symbol=req_sym, tick_offset=tick_offset)
+    return jsonify({"ok": True, "data": data, "simulation": True})
+
+
+@app.route("/api/scanner/gti", methods=["GET"])
+def scanner_gti_route():
+    """
+    Returns Strategy G: GTI Smart Money Trader Dashboard:
+      - Candle Color Classification (Yellow, Blue, Black, Green, Red)
+      - Smart Signal Engine (BUY CALL, BUY PUT, ACCUMULATION, WAIT)
+      - Option Suggestion Engine (ATM CE/PE, Delta, IV, SL, Target)
+      - Risk Management (1:2 Target, 20-25% Option SL, Trailing SL)
+      - Fake Signal Filters (Time Window, ATR Volatility, Volume, ADX Trend)
+    Query parameters:
+      - ?symbol=... (default NIFTY)
+      - ?scenario=dynamic|call|put|yellow|sideways (for simulation & interactive QA)
+      - ?tick=offset
+    """
+    req_sym = (request.args.get("symbol") or request.args.get("ticker") or "NIFTY").strip().upper()
+    req_scenario = (request.args.get("scenario") or "").strip().lower()
+    tick_offset = request.args.get("tick", default=None, type=float)
+
+    if req_scenario:
+        import gti_indicator
+        data = gti_indicator.generate_gti_scenario(scenario=req_scenario, symbol=req_sym, tick_offset=tick_offset)
+        return jsonify({"ok": True, "data": data, "scenario": req_scenario})
+
+    with STATE_LOCK:
+        eng = STATE.get("scanner")
+        client = STATE.get("kite_client")
+        logged_in = STATE.get("logged_in")
+
+    if logged_in and client:
+        try:
+            if eng:
+                dash = eng.get_or_eval_gti(max_age_seconds=4, symbol=req_sym)
+                if dash and dash.get("gti_status", {}).get("current_candle_color"):
+                    return jsonify({"ok": True, "data": dash})
+            else:
+                from scanner_engine import evaluate_strategy_g_standalone
+                data = evaluate_strategy_g_standalone(client, spot_symbol=req_sym)
+                if data and data.get("current_candle_color"):
+                    return jsonify({"ok": True, "data": data})
+        except Exception:
+            pass
+
+    import gti_indicator
+    data = gti_indicator.generate_gti_scenario(scenario="dynamic", symbol=req_sym, tick_offset=tick_offset)
     return jsonify({"ok": True, "data": data, "simulation": True})
 
 

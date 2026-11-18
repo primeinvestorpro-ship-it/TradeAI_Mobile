@@ -297,6 +297,12 @@ class ScannerEngine:
             "trading_signal": {},
             "records": [],
         }
+        self._gti_data = {
+            "gti_status": {},
+            "signal": {},
+            "suggested_option": {},
+            "candles_tail": [],
+        }
         self._lock       = threading.Lock()
         self._current_symbol_count = 0  # updated each scan cycle
 
@@ -362,6 +368,35 @@ class ScannerEngine:
                 self.log(f"[scanner] eval_strategy_f on-demand note: {exc!r}")
         return self.get_sustained_breakout_dashboard()
 
+    def get_gti_dashboard(self):
+        with self._lock:
+            return {
+                "gti_status": dict(self._gti_data.get("gti_status", {})),
+                "signal": dict(self._gti_data.get("signal", {})),
+                "suggested_option": dict(self._gti_data.get("suggested_option", {})),
+                "candles_tail": list(self._gti_data.get("candles_tail", [])),
+            }
+
+    def get_or_eval_gti(self, max_age_seconds=4, symbol="NIFTY"):
+        now = datetime.datetime.now()
+        is_stale = True
+        with self._lock:
+            ts_str = self._gti_data.get("gti_status", {}).get("timestamp")
+            cached_sym = self._gti_data.get("gti_status", {}).get("symbol")
+            if ts_str and cached_sym == symbol:
+                try:
+                    dt = datetime.datetime.fromisoformat(ts_str)
+                    if (now - dt).total_seconds() < max_age_seconds:
+                        is_stale = False
+                except Exception:
+                    pass
+        if is_stale:
+            try:
+                self._eval_strategy_g(spot_symbol=symbol)
+            except Exception as exc:
+                self.log(f"[scanner] eval_strategy_g on-demand note: {exc!r}")
+        return self.get_gti_dashboard()
+
     def get_symbol_count(self):
         return self._current_symbol_count
 
@@ -383,6 +418,7 @@ class ScannerEngine:
         enabled_d = self.settings.get("scanner_enabled_d", False)
         enabled_e = self.settings.get("scanner_enabled_e", True)
         enabled_f = self.settings.get("scanner_enabled_f", True)
+        enabled_g = self.settings.get("scanner_enabled_g", True)
         max_lot_size = self.settings.get("scanner_max_lot_size", 2500)
 
         # Evaluate Strategy F immediately at the very beginning so NIFTY is never delayed by 186 symbols
@@ -391,6 +427,13 @@ class ScannerEngine:
                 self._eval_strategy_f()
             except Exception as f_exc:
                 self.log(f"[scanner] Immediate Strategy F evaluation note: {f_exc!r}")
+
+        # Evaluate Strategy G (GTI Smart Money Trader) immediately for index
+        if enabled_g:
+            try:
+                self._eval_strategy_g()
+            except Exception as g_exc:
+                self.log(f"[scanner] Immediate Strategy G evaluation note: {g_exc!r}")
 
         # Collections for Smart Money Dashboard (Section 10)
         sm_acc = []
@@ -555,6 +598,10 @@ class ScannerEngine:
         # Evaluate Strategy F (NIFTY Sustained Breakout + F&O OI Confirmation)
         if enabled_f:
             self._eval_strategy_f()
+
+        # Evaluate Strategy G (GTI Smart Money Trader)
+        if enabled_g:
+            self._eval_strategy_g()
 
     def _eval_strategy_a(self, data, prev_day_hlc):
         sym = data["symbol"]
@@ -1003,6 +1050,77 @@ class ScannerEngine:
         except Exception as exc:
             self.log(f"[scanner] Strategy F evaluation error: {exc!r}")
 
+    def _eval_strategy_g(self, spot_symbol="NIFTY"):
+        """Evaluates Strategy G (GTI Smart Money Trader & Signal Engine)."""
+        try:
+            spot_instr = futures_engine.get_spot_instrument(self.kite_client, spot_symbol)
+            spot_token = spot_instr["instrument_token"]
+            spot_key = f"NSE:{spot_instr['tradingsymbol']}"
+            q = self.kite_client.get_quote([spot_key])
+            spot_q = q.get(spot_key, {})
+            spot_price = spot_q.get("last_price")
+
+            now = datetime.datetime.now()
+            start_5m = now - datetime.timedelta(days=5)
+            c5_spot = self.kite_client.get_intraday_history(spot_token, start_5m, now, interval="5minute") or []
+            if len(c5_spot) < 8:
+                return
+
+            res = scanner_strategy.evaluate_strategy_g(
+                candles_5m=c5_spot,
+                symbol=spot_symbol,
+                spot_price=spot_price,
+            )
+            gti_data = res.get("gti_data", {})
+            with self._lock:
+                self._gti_data = {
+                    "gti_status": {
+                        "symbol": spot_symbol,
+                        "spot_price": spot_price or gti_data.get("spot_price"),
+                        "current_candle_color": gti_data.get("current_candle_color"),
+                        "current_candle_label": gti_data.get("current_candle_label"),
+                        "has_recent_yellow": gti_data.get("has_recent_yellow"),
+                        "yellow_candle_high": gti_data.get("yellow_candle_high"),
+                        "yellow_candle_low": gti_data.get("yellow_candle_low"),
+                        "breaks_yellow_high": gti_data.get("breaks_yellow_high"),
+                        "breaks_yellow_low": gti_data.get("breaks_yellow_low"),
+                        "vol_ratio": gti_data.get("vol_ratio"),
+                        "atr": gti_data.get("atr"),
+                        "adx": gti_data.get("adx"),
+                        "market_status": gti_data.get("market_status"),
+                        "time_window_open": gti_data.get("time_window_open"),
+                        "time_window_status": gti_data.get("time_window_status"),
+                        "filter_active": gti_data.get("filter_active"),
+                        "filter_reasons": gti_data.get("filter_reasons", []),
+                        "timestamp": datetime.datetime.now().isoformat(),
+                    },
+                    "signal": {
+                        "direction": gti_data.get("direction"),
+                        "signal_badge": gti_data.get("signal_badge"),
+                        "signal_status": gti_data.get("signal_status"),
+                        "confidence": gti_data.get("confidence"),
+                        "passed": gti_data.get("passed"),
+                        "entry_price": gti_data.get("entry_price"),
+                        "structure_stop_loss": gti_data.get("structure_stop_loss"),
+                        "target1": gti_data.get("target1"),
+                        "target2": gti_data.get("target2"),
+                        "risk_reward": gti_data.get("risk_reward"),
+                        "trailing_sl_threshold": gti_data.get("trailing_sl_threshold"),
+                    },
+                    "suggested_option": gti_data.get("suggested_option") or {},
+                    "candles_tail": gti_data.get("classified_candles_tail", []),
+                }
+
+            if res.get("passed") and res.get("signal"):
+                sig = res["signal"]
+                candle_ts = c5_spot[-1].get("date") or datetime.datetime.now()
+                ts_str = candle_ts.strftime("%Y%m%d_%H%M") if hasattr(candle_ts, "strftime") else str(candle_ts)[:16]
+                key = f"G_{sig['direction']}_{spot_symbol}_{ts_str}"
+                if key not in self._seen_keys:
+                    self._emit_signal(sig, key)
+        except Exception as exc:
+            self.log(f"[scanner] Strategy G evaluation error: {exc!r}")
+
     def _clear_reversed_signal(self, symbol, old_direction, new_direction, strategy_id=None):
         """Removes opposite-direction signals for a symbol when a setup reverses."""
         removed = []
@@ -1207,3 +1325,31 @@ def evaluate_strategy_f_standalone(kite_client, spot_symbol="NIFTY"):
     except Exception as exc:
         print(f"[scanner] evaluate_strategy_f_standalone error: {exc!r}")
         return {"market_trend": {}, "derivatives": {}, "trading_signal": {}, "records": []}
+
+
+def evaluate_strategy_g_standalone(kite_client, spot_symbol="NIFTY"):
+    """Standalone evaluator for Strategy G (GTI Smart Money Trader)."""
+    try:
+        spot_instr = futures_engine.get_spot_instrument(kite_client, spot_symbol)
+        spot_token = spot_instr["instrument_token"]
+        spot_key = f"NSE:{spot_instr['tradingsymbol']}"
+        q = kite_client.get_quote([spot_key])
+        spot_price = q.get(spot_key, {}).get("last_price")
+
+        now = datetime.datetime.now()
+        start_5m = now - datetime.timedelta(days=5)
+        c5_spot = kite_client.get_intraday_history(spot_token, start_5m, now, interval="5minute") or []
+        if len(c5_spot) < 8:
+            import gti_indicator
+            return gti_indicator.generate_gti_scenario("dynamic", symbol=spot_symbol)
+
+        res = scanner_strategy.evaluate_strategy_g(
+            candles_5m=c5_spot,
+            symbol=spot_symbol,
+            spot_price=spot_price,
+        )
+        return res.get("gti_data", {})
+    except Exception as exc:
+        print(f"[scanner] evaluate_strategy_g_standalone error: {exc!r}")
+        import gti_indicator
+        return gti_indicator.generate_gti_scenario("dynamic", symbol=spot_symbol)

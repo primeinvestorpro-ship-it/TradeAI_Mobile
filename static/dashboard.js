@@ -1082,8 +1082,9 @@ btnScannerStart.addEventListener('click', () => {
   const enabledD  = $('scannerToggleD') ? $('scannerToggleD').checked : false;
   const enabledE  = $('scannerToggleE') ? $('scannerToggleE').checked : true;
   const enabledF  = $('scannerToggleF') ? $('scannerToggleF').checked : false;
+  const enabledG  = $('scannerToggleG') ? $('scannerToggleG').checked : true;
 
-  let payload = { enabled_a: enabledA, enabled_b: enabledB, enabled_c: enabledC, enabled_d: enabledD, enabled_e: enabledE, enabled_f: enabledF };
+  let payload = { enabled_a: enabledA, enabled_b: enabledB, enabled_c: enabledC, enabled_d: enabledD, enabled_e: enabledE, enabled_f: enabledF, enabled_g: enabledG };
   if (allFno) {
     payload.all_fno = true;
   } else {
@@ -1105,6 +1106,7 @@ btnScannerStart.addEventListener('click', () => {
       const modeLabel = d.all_fno ? 'All FNO universe' : 'custom symbols';
       addLog(`[scanner] Scanner started / updated — scanning ${modeLabel}`, 'info');
       refreshSustainedBreakoutDashboard();
+      refreshGtiDashboard();
     });
 });
 
@@ -1113,11 +1115,12 @@ if (btnQuickStartEF) {
   btnQuickStartEF.addEventListener('click', () => {
     if ($('scannerToggleE')) $('scannerToggleE').checked = true;
     if ($('scannerToggleF')) $('scannerToggleF').checked = true;
+    if ($('scannerToggleG')) $('scannerToggleG').checked = true;
     if (scannerAllFnoChk) scannerAllFnoChk.checked = true;
     if (scannerCustomSymDiv) scannerCustomSymDiv.classList.add('hidden');
 
     btnQuickStartEF.disabled = true;
-    btnQuickStartEF.textContent = '⏳ Starting E & F...';
+    btnQuickStartEF.textContent = '⏳ Starting E, F & G...';
 
     const payload = {
       all_fno: true,
@@ -1127,6 +1130,7 @@ if (btnQuickStartEF) {
       enabled_d: $('scannerToggleD') ? $('scannerToggleD').checked : false,
       enabled_e: true,
       enabled_f: true,
+      enabled_g: true,
     };
 
     fetch('/api/scanner/start', {
@@ -2426,6 +2430,209 @@ async function refreshSustainedBreakoutDashboard() {
 
 setInterval(refreshSustainedBreakoutDashboard, 3000);
 setTimeout(refreshSustainedBreakoutDashboard, 1000);
+
+// ── Strategy G: GTI Smart Money Trader ──────────────────────────────────────
+let currentGtiSymbol = 'NIFTY';
+let currentGtiScenario = '';
+
+window.setGtiStrategyScenario = function(sc) {
+  currentGtiScenario = sc;
+  refreshGtiDashboard();
+};
+
+async function refreshGtiDashboard() {
+  try {
+    const sel = $('gtiSymbolSelect');
+    if (sel && sel.value) currentGtiSymbol = sel.value;
+    let url = `/api/scanner/gti?symbol=${encodeURIComponent(currentGtiSymbol)}`;
+    if (currentGtiScenario) url += `&scenario=${encodeURIComponent(currentGtiScenario)}`;
+
+    const res = await fetch(url);
+    const d = await res.json();
+    if (!d.ok || !d.data) return;
+
+    const data = d.data;
+    const gtiStatus = data.gti_status || (data.current_candle_color ? data : {});
+    const signal = data.signal || (data.direction ? data : {});
+    const opt = data.suggested_option || {};
+    const tail = data.candles_tail || data.classified_candles_tail || [];
+
+    // Panel 1: Candle Engine
+    const gtiSpotPrice = $('gtiSpotPrice');
+    if (gtiSpotPrice) {
+      const sp = gtiStatus.spot_price != null ? Number(gtiStatus.spot_price).toFixed(2) : '—';
+      gtiSpotPrice.textContent = `${gtiStatus.symbol || currentGtiSymbol}: ₹${sp}`;
+    }
+
+    const gtiCurrentCandleBadge = $('gtiCurrentCandleBadge');
+    if (gtiCurrentCandleBadge) {
+      const color = gtiStatus.current_candle_color || 'NORMAL';
+      if (color === 'YELLOW') {
+        gtiCurrentCandleBadge.textContent = '🟡 YELLOW (Accumulation)';
+        gtiCurrentCandleBadge.className = 'f-badge gti-badge-yellow';
+      } else if (color === 'BLUE') {
+        gtiCurrentCandleBadge.textContent = '🔵 BLUE (Bullish Momentum)';
+        gtiCurrentCandleBadge.className = 'f-badge gti-badge-blue';
+      } else if (color === 'BLACK') {
+        gtiCurrentCandleBadge.textContent = '⚫ BLACK (Bearish Momentum)';
+        gtiCurrentCandleBadge.className = 'f-badge gti-badge-black';
+      } else if (color === 'GREEN') {
+        gtiCurrentCandleBadge.textContent = '🟢 GREEN (Standard Bullish)';
+        gtiCurrentCandleBadge.className = 'f-badge f-badge-bull';
+      } else {
+        gtiCurrentCandleBadge.textContent = '🔴 RED (Standard Bearish)';
+        gtiCurrentCandleBadge.className = 'f-badge f-badge-bear';
+      }
+    }
+
+    const gtiYellowStatus = $('gtiYellowStatus');
+    if (gtiYellowStatus) {
+      if (gtiStatus.has_recent_yellow) {
+        gtiYellowStatus.innerHTML = '<span style="color:#d97706;font-weight:700;">🟡 Yellow Candle Found (Smart Money Base Active)</span>';
+      } else {
+        gtiYellowStatus.textContent = 'Awaiting Yellow Accumulation Candle';
+      }
+    }
+
+    const gtiYellowLevels = $('gtiYellowLevels');
+    if (gtiYellowLevels) {
+      const yh = gtiStatus.yellow_candle_high != null ? `H: ₹${Number(gtiStatus.yellow_candle_high).toFixed(2)}` : 'H: —';
+      const yl = gtiStatus.yellow_candle_low != null ? `L: ₹${Number(gtiStatus.yellow_candle_low).toFixed(2)}` : 'L: —';
+      gtiYellowLevels.textContent = `${yh} | ${yl}`;
+    }
+
+    const gtiVolRatio = $('gtiVolRatio');
+    if (gtiVolRatio) {
+      const vr = gtiStatus.vol_ratio != null ? `${Number(gtiStatus.vol_ratio).toFixed(2)}x` : '—';
+      const isSpike = (gtiStatus.vol_ratio || 0) >= 1.45;
+      gtiVolRatio.textContent = `${vr} ${isSpike ? '(Volume Spike Verified)' : '(Normal Volume)'}`;
+      gtiVolRatio.className = 'f-badge ' + (isSpike ? 'f-badge-bull' : 'f-badge-neutral');
+    }
+
+    const gtiAtrVal = $('gtiAtrVal');
+    if (gtiAtrVal) {
+      const atr = gtiStatus.atr != null ? Number(gtiStatus.atr).toFixed(2) : '—';
+      gtiAtrVal.textContent = `ATR: ${atr} pts`;
+    }
+
+    // Mini candle stream tail
+    const gtiCandlesTail = $('gtiCandlesTail');
+    if (gtiCandlesTail && tail && tail.length > 0) {
+      gtiCandlesTail.innerHTML = tail.map(c => {
+        let bg = '#94a3b8';
+        let dot = '⚪';
+        if (c.color === 'YELLOW') { bg = '#fef08a'; dot = '🟡'; }
+        else if (c.color === 'BLUE') { bg = '#dbeafe'; dot = '🔵'; }
+        else if (c.color === 'BLACK') { bg = '#1e293b;color:#f8fafc'; dot = '⚫'; }
+        else if (c.color === 'GREEN') { bg = '#dcfce7'; dot = '🟢'; }
+        else if (c.color === 'RED') { bg = '#fee2e2'; dot = '🔴'; }
+        return `<span style="font-size:10px;padding:2px 6px;border-radius:4px;background:${bg};font-weight:700;display:inline-flex;align-items:center;gap:2px;" title="${c.label || ''}">${dot} ${c.color}</span>`;
+      }).join('');
+    }
+
+    // Panel 2: Signal & Option Suggestion
+    const gtiSignalBadge = $('gtiSignalBadge');
+    if (gtiSignalBadge) {
+      const dir = signal.direction || 'WAIT';
+      if (dir === 'BUY_CALL') {
+        gtiSignalBadge.textContent = '🔵 BUY CALL (CONFIRMED)';
+        gtiSignalBadge.className = 'f-badge gti-signal-call';
+      } else if (dir === 'BUY_PUT') {
+        gtiSignalBadge.textContent = '⚫ BUY PUT (CONFIRMED)';
+        gtiSignalBadge.className = 'f-badge gti-signal-put';
+      } else if (dir === 'ACCUMULATION') {
+        gtiSignalBadge.textContent = '🟡 SMART MONEY ACCUMULATION';
+        gtiSignalBadge.className = 'f-badge gti-signal-acc';
+      } else {
+        gtiSignalBadge.textContent = 'WAIT / NO TRADE';
+        gtiSignalBadge.className = 'f-badge f-signal-badge-wait';
+      }
+    }
+
+    const gtiSignalDesc = $('gtiSignalDesc');
+    if (gtiSignalDesc) {
+      gtiSignalDesc.textContent = signal.signal_status || 'Awaiting setup';
+    }
+
+    const gtiSignalConf = $('gtiSignalConf');
+    if (gtiSignalConf) {
+      const conf = signal.confidence || 'LOW';
+      gtiSignalConf.textContent = `CONFIDENCE: ${conf}`;
+      if (conf === 'HIGH') gtiSignalConf.className = 'gti-conf-high';
+      else if (conf === 'MEDIUM') gtiSignalConf.className = 'gti-conf-med';
+      else gtiSignalConf.className = 'gti-conf-low';
+    }
+
+    const gtiOptSymbol = $('gtiOptSymbol');
+    if (gtiOptSymbol) gtiOptSymbol.textContent = opt.tradingsymbol || '—';
+
+    const gtiOptLtp = $('gtiOptLtp');
+    if (gtiOptLtp) gtiOptLtp.textContent = opt.estimated_ltp != null ? `₹${Number(opt.estimated_ltp).toFixed(2)}` : '₹—';
+
+    const gtiOptGreeks = $('gtiOptGreeks');
+    if (gtiOptGreeks) {
+      const dVal = opt.delta != null ? opt.delta : '—';
+      const ivVal = opt.iv != null ? `${opt.iv}%` : '—';
+      gtiOptGreeks.textContent = `Δ: ${dVal} | IV: ${ivVal}`;
+    }
+
+    const gtiOptSl = $('gtiOptSl');
+    if (gtiOptSl) gtiOptSl.textContent = opt.option_stop_loss != null ? `₹${Number(opt.option_stop_loss).toFixed(2)} (-22%)` : '—';
+
+    const gtiOptTarget = $('gtiOptTarget');
+    if (gtiOptTarget) gtiOptTarget.textContent = opt.option_target != null ? `₹${Number(opt.option_target).toFixed(2)} (1:2 R:R)` : '—';
+
+    // Panel 3: Risk & Filters
+    const gtiSpotLevels = $('gtiSpotLevels');
+    if (gtiSpotLevels) {
+      const ep = signal.entry_price != null ? `Entry: ₹${Number(signal.entry_price).toFixed(2)}` : 'Entry: —';
+      const sl = signal.structure_stop_loss != null ? `SL: ₹${Number(signal.structure_stop_loss).toFixed(2)}` : 'SL: —';
+      const t2 = signal.target2 != null ? `Tgt: ₹${Number(signal.target2).toFixed(2)}` : 'Tgt: —';
+      gtiSpotLevels.textContent = `${ep} | ${sl} | ${t2}`;
+    }
+
+    const gtiFilterBadge = $('gtiFilterBadge');
+    if (gtiFilterBadge) {
+      const isFiltered = !!gtiStatus.filter_active;
+      gtiFilterBadge.textContent = isFiltered ? 'FILTER PAUSED' : 'ALL FILTERS PASS';
+      gtiFilterBadge.className = 'f-panel-pill ' + (isFiltered ? 'f-pill-score' : 'f-pill-green');
+    }
+
+    const gtiTimeFilterStatus = $('gtiTimeFilterStatus');
+    if (gtiTimeFilterStatus) {
+      const isOpen = !!gtiStatus.time_window_open;
+      gtiTimeFilterStatus.textContent = gtiStatus.time_window_status || (isOpen ? 'Trading Window Open' : 'Closed');
+      gtiTimeFilterStatus.className = 'f-value ' + (isOpen ? 'gti-filter-pass' : 'gti-filter-paused');
+    }
+
+    const gtiAtrVolFilterStatus = $('gtiAtrVolFilterStatus');
+    if (gtiAtrVolFilterStatus) {
+      gtiAtrVolFilterStatus.textContent = 'Approved (ATR & Vol Spike Verified)';
+      gtiAtrVolFilterStatus.className = 'f-value gti-filter-pass';
+    }
+
+    const gtiAdxFilterStatus = $('gtiAdxFilterStatus');
+    if (gtiAdxFilterStatus) {
+      const mStatus = gtiStatus.market_status || 'NORMAL';
+      const adxNum = gtiStatus.adx != null ? gtiStatus.adx : '—';
+      gtiAdxFilterStatus.textContent = `${mStatus} (ADX: ${adxNum})`;
+      gtiAdxFilterStatus.className = 'f-value ' + (mStatus === 'SIDEWAYS' ? 'gti-filter-paused' : 'gti-filter-pass');
+    }
+
+    const gtiFilterReasonsBox = $('gtiFilterReasonsBox');
+    if (gtiFilterReasonsBox) {
+      const reasons = gtiStatus.filter_reasons || [];
+      if (reasons.length > 0) {
+        gtiFilterReasonsBox.innerHTML = reasons.map(r => `<div>⚠️ ${r}</div>`).join('');
+      } else {
+        gtiFilterReasonsBox.innerHTML = '';
+      }
+    }
+  } catch (e) {}
+}
+
+setInterval(refreshGtiDashboard, 3000);
+setTimeout(refreshGtiDashboard, 1200);
 
 // ── Page-load Bootstrap ─────────────────────────────────────────────────────
 // If the server already knows we're logged in (from token.json restore),

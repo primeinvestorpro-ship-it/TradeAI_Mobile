@@ -183,6 +183,11 @@
             <span class="scanner-badge" style="background:#06b6d4;color:#000;font-weight:bold;">F</span>
             NIFTY Breakout + F&O OI
           </label>
+          <label class="scanner-toggle-label mt-4">
+            <input type="checkbox" id="scannerToggleG" checked />
+            <span class="scanner-badge" style="background:#f59e0b;color:#000;font-weight:bold;">G</span>
+            GTI Smart Money Trader
+          </label>
         </div>
 
         <!-- Strategy D Backtest Button -->
@@ -647,6 +652,166 @@
         </div>
       </section>
 
+      <!-- Strategy G: GTI Smart Money Trader & Signal Engine -->
+      <section id="gtiTraderCard" class="card mt-8">
+        <div class="scanner-signals-header" style="flex-wrap:wrap;gap:10px;">
+          <h3 class="card-title" style="color:#d97706;display:flex;align-items:center;gap:6px;">
+            👑 Strategy G: GTI Smart Money Trader
+          </h3>
+          <span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fde68a;font-size:11px;font-weight:700;">
+            GTI Indicator Engine • Candles + Smart Signals
+          </span>
+        </div>
+
+        <!-- Sleek GTI Workflow Flow -->
+        <div class="f-workflow-flow mt-8">
+          <div class="f-step"><span class="f-step-num" style="background:#f59e0b;">1</span> 🟡 Accumulation Detected</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num" style="background:#f59e0b;">2</span> Yellow High / Low Defined</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num" style="background:#2563eb;">3</span> Volume Spike Expansion</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num" style="background:#2563eb;">4</span> Blue Breakout (CALL) / Black (PUT)</div>
+          <span class="f-step-arrow">→</span>
+          <div class="f-step"><span class="f-step-num" style="background:#10b981;">5</span> ATM Option &amp; 1:2 R:R Target</div>
+        </div>
+
+        <!-- Scenario & Symbol Controls -->
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-top:10px;padding:8px 12px;background:rgba(255,255,255,0.7);border-radius:8px;border:1px solid #e2e8f0;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:12px;font-weight:600;color:#475569;">Instrument:</span>
+            <select id="gtiSymbolSelect" onchange="refreshGtiDashboard()" style="padding:4px 8px;font-size:12px;border-radius:6px;border:1px solid #cbd5e1;background:#fff;">
+              <option value="NIFTY" selected>NIFTY 50</option>
+              <option value="BANKNIFTY">BANKNIFTY</option>
+              <option value="FINNIFTY">FINNIFTY</option>
+            </select>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:12px;font-weight:600;color:#475569;">Scenarios:</span>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setGtiStrategyScenario('dynamic')" style="font-size:11px;padding:3px 8px;">⚡ Live Dynamic</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setGtiStrategyScenario('call')" style="font-size:11px;padding:3px 8px;color:#2563eb;font-weight:600;">🔵 Buy Call (Yellow+Blue)</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setGtiStrategyScenario('put')" style="font-size:11px;padding:3px 8px;color:#0f172a;font-weight:600;">⚫ Buy Put (Yellow+Black)</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setGtiStrategyScenario('yellow')" style="font-size:11px;padding:3px 8px;color:#d97706;font-weight:600;">🟡 Accumulation (Yellow)</button>
+            <button type="button" class="btn btn-sm btn-secondary" onclick="setGtiStrategyScenario('sideways')" style="font-size:11px;padding:3px 8px;color:#64748b;font-weight:600;">⏸ Sideways Filtered</button>
+          </div>
+        </div>
+
+        <!-- 3 Distinct GTI Panels Grid -->
+        <div class="gti-grid">
+
+          <!-- PANEL 1: GTI CANDLE & MOMENTUM ENGINE -->
+          <div class="gti-panel gti-panel-1">
+            <div class="f-panel-header">
+              <span class="f-panel-title" style="color:#d97706;">
+                🕯️ Panel 1: GTI Candle Engine
+              </span>
+              <span id="gtiSpotPrice" class="f-panel-pill" style="background:#fef3c7;color:#b45309;">NIFTY: ₹—</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">Current GTI Candle:</span>
+                <span id="gtiCurrentCandleBadge" class="f-badge gti-badge-yellow">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Smart Money Accumulation:</span>
+                <span id="gtiYellowStatus" class="f-value">Awaiting Yellow Candle</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Yellow Ref Levels (H / L):</span>
+                <span id="gtiYellowLevels" class="f-value">— / —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Volume Spike vs 20-MA:</span>
+                <span id="gtiVolRatio" class="f-badge f-badge-neutral">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">ATR Volatility (14):</span>
+                <span id="gtiAtrVal" class="f-value">—</span>
+              </div>
+            </div>
+            <!-- Live GTI Mini Candle Tape -->
+            <div style="margin-top:12px;padding-top:8px;border-top:1px solid #e2e8f0;">
+              <span style="font-size:11px;font-weight:700;color:#64748b;display:block;margin-bottom:6px;">Recent GTI Candle Stream:</span>
+              <div id="gtiCandlesTail" style="display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;"></div>
+            </div>
+          </div>
+
+          <!-- PANEL 2: SMART SIGNAL & OPTION SUGGESTION -->
+          <div class="gti-panel gti-panel-2">
+            <div class="f-panel-header">
+              <span class="f-panel-title" style="color:#2563eb;">
+                🎯 Panel 2: Smart Signal &amp; ATM Option
+              </span>
+              <span id="gtiSignalConf" class="gti-conf-high">CONFIDENCE: —</span>
+            </div>
+            <div style="margin: 8px 0 10px 0;">
+              <span id="gtiSignalBadge" class="f-badge gti-signal-acc" style="font-size:14px;padding:6px 14px;display:inline-block;">WAIT / NO TRADE</span>
+              <span id="gtiSignalDesc" class="f-setup-status" style="display:block;margin-top:6px;">Awaiting setup</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">Suggested ATM Option:</span>
+                <span id="gtiOptSymbol" class="f-value" style="font-weight:800;color:#1e40af;">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Estimated LTP / Premium:</span>
+                <span id="gtiOptLtp" class="f-value" style="font-weight:700;">₹—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Option Greeks (Delta / IV):</span>
+                <span id="gtiOptGreeks" class="f-value">— / —</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Option Stop Loss (20-25%):</span>
+                <span id="gtiOptSl" class="f-value" style="color:#dc2626;font-weight:700;">₹—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Option Target (1:2 R:R):</span>
+                <span id="gtiOptTarget" class="f-value" style="color:#16a34a;font-weight:700;">₹—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- PANEL 3: RISK MANAGEMENT & FAKE SIGNAL FILTERS -->
+          <div class="gti-panel gti-panel-3">
+            <div class="f-panel-header">
+              <span class="f-panel-title" style="color:#047857;">
+                🛡️ Panel 3: Risk &amp; Fake Signal Filters
+              </span>
+              <span id="gtiFilterBadge" class="f-panel-pill f-pill-green">ALL FILTERS PASS</span>
+            </div>
+            <div class="f-panel-rows">
+              <div class="f-row">
+                <span class="f-label">Spot Entry / SL / Target:</span>
+                <span id="gtiSpotLevels" class="f-value">—</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Risk : Reward Ratio:</span>
+                <span class="f-value" style="color:#0284c7;font-weight:700;">1:2.0 (Strict R:R)</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Trailing Stop Loss:</span>
+                <span id="gtiTrailingSl" class="f-value" style="color:#16a34a;">Active after +20% gain</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">Trading Window (9:25-11:30 &amp; 13:30-15:15):</span>
+                <span id="gtiTimeFilterStatus" class="f-value gti-filter-pass">Open</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">ATR &amp; Volume Filter:</span>
+                <span id="gtiAtrVolFilterStatus" class="f-value gti-filter-pass">Approved</span>
+              </div>
+              <div class="f-row">
+                <span class="f-label">ADX Sideways Filter:</span>
+                <span id="gtiAdxFilterStatus" class="f-value gti-filter-pass">Trending</span>
+              </div>
+            </div>
+            <div id="gtiFilterReasonsBox" style="margin-top:10px;padding-top:8px;border-top:1px solid #e2e8f0;font-size:11px;color:#dc2626;font-weight:600;"></div>
+          </div>
+
+        </div>
+      </section>
+
       
       <!-- Live Scanner Signals Card -->
       <section id="scannerSignalsCard" class="card scanner-signals-card hidden">
@@ -1096,6 +1261,6 @@
   </script>
   <script src="/static/socket.io.min.js"></script>
   <script src="/static/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/dashboard.js?v=3.4"></script>
+  <script src="/static/dashboard.js?v=3.5"></script>
 </body>
 </html>

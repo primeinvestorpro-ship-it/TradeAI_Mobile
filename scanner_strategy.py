@@ -917,6 +917,92 @@ def evaluate_strategy_f(
 
 
 # ---------------------------------------------------------------------------
+# Strategy G — GTI Smart Money Trader (Candle Color & Smart Signal Engine)
+# ---------------------------------------------------------------------------
+
+STRATEGY_G_ID   = "G"
+STRATEGY_G_NAME = "GTI Smart Money Trader"
+
+
+def evaluate_strategy_g(
+    candles_5m,
+    symbol="NIFTY",
+    spot_price=None,
+    futures_symbol=None,
+    expiry=None,
+    candle_ts=None,
+    atr_period=14,
+    vol_period=20,
+    lookback_yellow=5,
+    vol_spike_threshold=1.45,
+    min_atr_threshold=12.0,
+    override_time=None,
+):
+    """
+    Evaluate Strategy G — GTI Smart Money Trader.
+    Epic 1: GTI Indicator Engine (Candle Colors: Yellow, Blue, Black).
+    Epic 2: Smart Signal Engine (BUY CALL: Yellow break + Blue; BUY PUT: Yellow break + Black).
+    Epic 3: ATM Option Suggestion Engine.
+    Epic 4: Risk Management Engine (1:2 R:R, 20-25% Option SL, Trailing SL).
+    Epic 5: Fake Signal Filters (ATR, Volume, ADX Sideways).
+    Epic 6: Time Window Filter (09:25-11:30 & 13:30-15:15 IST).
+    """
+    import gti_indicator
+    raw_res = gti_indicator.evaluate_gti_strategy(
+        candles_5m=candles_5m,
+        symbol=symbol,
+        spot_price=spot_price,
+        atr_period=atr_period,
+        vol_period=vol_period,
+        lookback_yellow=lookback_yellow,
+        vol_spike_threshold=vol_spike_threshold,
+        min_atr_threshold=min_atr_threshold,
+        override_time=override_time,
+    )
+
+    passed = raw_res.get("passed", False)
+    direction = raw_res.get("direction", "WAIT")
+    sig = None
+    if passed and direction in ("BUY_CALL", "BUY_PUT"):
+        ts = candle_ts or (candles_5m[-1].get("time") if candles_5m else datetime.datetime.now())
+        sig = _make_signal(
+            strategy_id=STRATEGY_G_ID,
+            strategy_name=STRATEGY_G_NAME,
+            direction="BULLISH" if direction == "BUY_CALL" else "BEARISH",
+            symbol=symbol,
+            futures_symbol=futures_symbol or symbol,
+            expiry=expiry,
+            candle_ts=ts,
+            conditions={
+                "gti_signal": direction,
+                "confidence": raw_res.get("confidence"),
+                "candle_color": raw_res.get("current_candle_color"),
+                "yellow_break": raw_res.get("breaks_yellow_high") or raw_res.get("breaks_yellow_low"),
+                "time_window_open": raw_res.get("time_window_open"),
+            },
+            spot_price=spot_price or raw_res.get("spot_price"),
+            futures_price=spot_price or raw_res.get("spot_price"),
+            atm_option=raw_res.get("suggested_option", {}).get("tradingsymbol"),
+            values={
+                "confidence": raw_res.get("confidence"),
+                "option_suggestion": raw_res.get("suggested_option"),
+                "structure_sl": raw_res.get("structure_stop_loss"),
+                "target1": raw_res.get("target1"),
+                "target2": raw_res.get("target2"),
+                "trailing_sl": raw_res.get("trailing_sl_threshold"),
+                "candle_tail": raw_res.get("classified_candles_tail"),
+            },
+        )
+
+    return {
+        "passed": passed,
+        "direction": direction,
+        "signal": sig,
+        "gti_data": raw_res,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Deduplication helper
 # ---------------------------------------------------------------------------
 
