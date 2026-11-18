@@ -23,6 +23,7 @@ import json
 import os
 import sys
 import threading
+import time
 import webbrowser
 
 # Ensure Windows stdout/stderr handles UTF-8 safely without charmap crashes
@@ -796,6 +797,8 @@ def futures_symbols():
     return jsonify({"ok": True, "count": len(symbols), "symbols": symbols})
 
 
+_LTP_CACHE = {}  # quote_key -> (timestamp, dict)
+
 @app.route("/api/spot_ltp", methods=["GET"])
 def spot_ltp():
     """Live spot LTP for the configured or requested ticker — polled while idle."""
@@ -806,15 +809,20 @@ def spot_ltp():
     settings = load_settings()
     req_ticker = (request.args.get("ticker") or "").strip().upper()
     ticker = req_ticker or settings.get("ticker", "RELIANCE")
+    spot_symbol = futures_engine.resolve_spot_tradingsymbol(ticker)
+    quote_key = f"NSE:{spot_symbol}"
+    now_ts = time.time()
+
+    # If recent cache (< 1.5s), return it immediately to avoid Kite rate limits/timeouts
+    cached = _LTP_CACHE.get(quote_key)
+    if cached and (now_ts - cached[0]) < 1.5:
+        return jsonify(cached[1])
+
     try:
-        spot_symbol = futures_engine.resolve_spot_tradingsymbol(ticker)
-        quote_key = f"NSE:{spot_symbol}"
         q = kite_client.get_quote([quote_key])
         qd = q[quote_key]
         ltp = qd["last_price"]
-        # net_change = last_price - prev_close (Kite provides this directly)
         net_change = qd.get("net_change", 0)
-        # prev close from OHLC (Kite ohlc.close = previous day close)
         prev_close = (qd.get("ohlc") or {}).get("close") or None
         if prev_close and prev_close > 0:
             change_pct = ((ltp - prev_close) / prev_close) * 100
@@ -826,7 +834,7 @@ def spot_ltp():
         else:
             change_pct = 0
             change_abs = 0
-        return jsonify({
+        resp_data = {
             "ok": True,
             "ticker": ticker.upper(),
             "spot_symbol": spot_symbol,
@@ -834,8 +842,15 @@ def spot_ltp():
             "change_pct": round(change_pct, 2),
             "change_abs": round(change_abs, 2),
             "prev_close": prev_close,
-        })
+        }
+        _LTP_CACHE[quote_key] = (now_ts, resp_data)
+        return jsonify(resp_data)
     except Exception as exc:  # noqa: BLE001
+        # Fallback to last known good cache if available (up to 60s)
+        if cached and (now_ts - cached[0]) < 60:
+            fallback = dict(cached[1])
+            fallback["cached"] = True
+            return jsonify(fallback)
         return jsonify({"ok": False, "error": str(exc)}), 500
 
 

@@ -2392,10 +2392,10 @@ async function refreshSustainedBreakoutDashboard() {
     const kpiScanVal   = $('kpiScannerVal');
     const kpiStratLine = $('kpiActiveStrategies');
     const kpiSigCount  = $('kpiSignalsCount');
-    const dir          = p3.direction || 'NO TRADE';
-    const score        = p3.confidence_score != null ? p3.confidence_score : (p3.score != null ? p3.score : 0);
-    const isLongSig    = dir === 'LONG';
-    const isShortSig   = dir === 'SHORT';
+    const signalDir    = p3.direction || 'NO TRADE';
+    const signalScore  = p3.confidence_score != null ? p3.confidence_score : (p3.score != null ? p3.score : score);
+    const isLongSig    = signalDir === 'LONG';
+    const isShortSig   = signalDir === 'SHORT';
     const isNoTrade    = !isLongSig && !isShortSig;
 
     if (kpiScanVal) {
@@ -2412,7 +2412,7 @@ async function refreshSustainedBreakoutDashboard() {
     }
     if (kpiStratLine) {
       const sym   = p1.symbol || currentFSymbol || 'NIFTY';
-      const scoreLabel = `Score: ${score}/100`;
+      const scoreLabel = `Score: ${signalScore}/100`;
       kpiStratLine.textContent  = `${scoreLabel} • ${sym}`;
       kpiStratLine.className    = 'argon-trend ' + (isLongSig ? 'text-success' : (isShortSig ? 'text-danger' : 'text-warning'));
     }

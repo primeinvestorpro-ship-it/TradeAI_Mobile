@@ -171,6 +171,7 @@ class KiteClient:
             if self.proxies:
                 self.kite.reqsession.proxies.update(self.proxies)
 
+        self.kite.timeout = 15
         self.ticker = None
         self._tick_lock = threading.Lock()
         self._tick_store = {}  # instrument_token -> latest tick dict
