@@ -2182,9 +2182,22 @@ async function refreshSustainedBreakoutDashboard() {
     if (fPanelEmaVal) fPanelEmaVal.textContent = `${p1.ema10 ?? '—'} / ${p1.ema21 ?? '—'} / ${p1.ema50 ?? '—'}`;
     const fPanelEmaStatus = $('fPanelEmaStatus');
     if (fPanelEmaStatus) {
-      const isAligned = !!p1.ema_aligned;
-      fPanelEmaStatus.textContent = isAligned ? 'BULLISH (10>21>50)' : 'BEARISH / MIXED';
-      fPanelEmaStatus.className = 'f-badge ' + (isAligned ? 'f-badge-bull' : 'f-badge-neutral');
+      const e10 = Number(p1.ema10);
+      const e21 = Number(p1.ema21);
+      const e50 = Number(p1.ema50);
+      const isBull = p1.stacked_bull || p1.ema_trend === 'BULLISH' || (e10 && e21 && e50 && e10 > e21 && e21 > e50);
+      const isBear = p1.stacked_bear || p1.ema_trend === 'BEARISH' || (e10 && e21 && e50 && e10 < e21 && e21 < e50);
+
+      if (isBull) {
+        fPanelEmaStatus.textContent = 'BULLISH (10>21>50)';
+        fPanelEmaStatus.className = 'f-badge f-badge-bull';
+      } else if (isBear) {
+        fPanelEmaStatus.textContent = 'BEARISH (10<21<50)';
+        fPanelEmaStatus.className = 'f-badge f-badge-bear';
+      } else {
+        fPanelEmaStatus.textContent = 'MIXED / CONSOLIDATION';
+        fPanelEmaStatus.className = 'f-badge f-badge-neutral';
+      }
     }
     const fPanelSupertrend = $('fPanelSupertrend');
     if (fPanelSupertrend) {
@@ -2302,11 +2315,20 @@ async function refreshSustainedBreakoutDashboard() {
     // ── Update Top KPI Cards Dynamically ──
     const kpiSent = $('kpiSentiment');
     if (kpiSent) {
-      if (score >= 70 || p3.direction === 'LONG') {
+      const isLong = p3.direction === 'LONG';
+      const isShort = p3.direction === 'SHORT';
+
+      if (isLong) {
         kpiSent.textContent = `BULLISH (${score})`;
         kpiSent.style.color = '#2dce89';
-      } else if ((score > 0 && score <= 35) || p3.direction === 'SHORT') {
+      } else if (isShort) {
         kpiSent.textContent = `BEARISH (${score})`;
+        kpiSent.style.color = '#f5365c';
+      } else if (score >= 65 && p1.price_vs_avwap === 'ABOVE') {
+        kpiSent.textContent = `BULLISH BIAS (${score})`;
+        kpiSent.style.color = '#2dce89';
+      } else if (score <= 35 || p1.price_vs_avwap === 'BELOW') {
+        kpiSent.textContent = `BEARISH BIAS (${score})`;
         kpiSent.style.color = '#f5365c';
       } else if (score > 0) {
         kpiSent.textContent = `NEUTRAL (${score})`;

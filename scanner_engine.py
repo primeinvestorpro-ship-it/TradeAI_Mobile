@@ -919,7 +919,10 @@ class ScannerEngine:
 
             # 7. Update self._sustained_breakout_data (3 panels)
             v = result.get("values", {})
-            ema_aligned = v.get("ema_data", {}).get("stacked_bull") or v.get("ema_data", {}).get("stacked_bear")
+            stacked_bull = bool(v.get("ema_data", {}).get("stacked_bull"))
+            stacked_bear = bool(v.get("ema_data", {}).get("stacked_bear"))
+            ema_aligned = stacked_bull or stacked_bear
+            ema_trend = "BULLISH" if stacked_bull else ("BEARISH" if stacked_bear else "MIXED")
             price_vs_avwap = "ABOVE" if v.get("avwap_data", {}).get("above_avwap") else ("BELOW" if v.get("avwap_data", {}).get("below_avwap") else "AT VWAP")
             fut_chg = round(((fut_price - prev_fut_price) / prev_fut_price * 100), 2) if (fut_price and prev_fut_price) else 0.0
             oi_chg = round((v.get("futures_data", {}).get("change_oi", 0) / prev_oi * 100), 2) if (prev_oi and prev_oi > 0) else 0.0
@@ -933,6 +936,9 @@ class ScannerEngine:
                         "ema21": v.get("ema_data", {}).get("ema21"),
                         "ema50": v.get("ema_data", {}).get("ema50"),
                         "ema_aligned": ema_aligned,
+                        "ema_trend": ema_trend,
+                        "stacked_bull": stacked_bull,
+                        "stacked_bear": stacked_bear,
                         "supertrend": v.get("supertrend_data", {}).get("val"),
                         "supertrend_trend": v.get("supertrend_data", {}).get("trend"),
                         "avwap": v.get("avwap_data", {}).get("avwap"),
@@ -1136,7 +1142,10 @@ def evaluate_strategy_f_standalone(kite_client, spot_symbol="NIFTY"):
         )
 
         v = result.get("values", {})
-        ema_aligned = v.get("ema_data", {}).get("stacked_bull") or v.get("ema_data", {}).get("stacked_bear")
+        stacked_bull = bool(v.get("ema_data", {}).get("stacked_bull"))
+        stacked_bear = bool(v.get("ema_data", {}).get("stacked_bear"))
+        ema_aligned = stacked_bull or stacked_bear
+        ema_trend = "BULLISH" if stacked_bull else ("BEARISH" if stacked_bear else "MIXED")
         price_vs_avwap = "ABOVE" if v.get("avwap_data", {}).get("above_avwap") else ("BELOW" if v.get("avwap_data", {}).get("below_avwap") else "AT VWAP")
         fut_chg = round(((fut_price - prev_fut_price) / prev_fut_price * 100), 2) if (fut_price and prev_fut_price) else 0.0
         oi_chg = round((v.get("futures_data", {}).get("change_oi", 0) / prev_oi * 100), 2) if (prev_oi and prev_oi > 0) else 0.0
@@ -1149,6 +1158,9 @@ def evaluate_strategy_f_standalone(kite_client, spot_symbol="NIFTY"):
                 "ema21": v.get("ema_data", {}).get("ema21"),
                 "ema50": v.get("ema_data", {}).get("ema50"),
                 "ema_aligned": ema_aligned,
+                "ema_trend": ema_trend,
+                "stacked_bull": stacked_bull,
+                "stacked_bear": stacked_bear,
                 "supertrend": v.get("supertrend_data", {}).get("val"),
                 "supertrend_trend": v.get("supertrend_data", {}).get("trend"),
                 "avwap": v.get("avwap_data", {}).get("avwap"),

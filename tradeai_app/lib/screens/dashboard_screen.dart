@@ -92,9 +92,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final score = (p3['confidence_score'] as num?)?.toInt() ?? 0;
         final dir = p3['direction']?.toString().toUpperCase() ?? 'NO TRADE';
 
-        if (score >= 70 || dir == 'LONG') {
+        if (dir == 'LONG') {
           newSentiment = "BULLISH ($score)";
-        } else if ((score > 0 && score <= 35) || dir == 'SHORT') {
+        } else if (dir == 'SHORT') {
+          newSentiment = "BEARISH ($score)";
+        } else if (score >= 65) {
+          newSentiment = "BULLISH ($score)";
+        } else if (score > 0 && score <= 35) {
           newSentiment = "BEARISH ($score)";
         } else if (score > 0) {
           newSentiment = "NEUTRAL ($score)";

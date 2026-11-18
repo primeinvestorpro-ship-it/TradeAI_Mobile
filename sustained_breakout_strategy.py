@@ -1105,7 +1105,10 @@ def generate_strategy_f_scenario(scenario: str = "dynamic", symbol: str = "NIFTY
     )
 
     v = result.get("values", {})
-    ema_aligned = v.get("ema_data", {}).get("stacked_bull") or v.get("ema_data", {}).get("stacked_bear")
+    stacked_bull = bool(v.get("ema_data", {}).get("stacked_bull"))
+    stacked_bear = bool(v.get("ema_data", {}).get("stacked_bear"))
+    ema_aligned = stacked_bull or stacked_bear
+    ema_trend = "BULLISH" if stacked_bull else ("BEARISH" if stacked_bear else "MIXED")
     price_vs_avwap = "ABOVE" if v.get("avwap_data", {}).get("above_avwap") else ("BELOW" if v.get("avwap_data", {}).get("below_avwap") else "AT VWAP")
     fut_chg = round(((fut_p - prev_fut_p) / prev_fut_p * 100), 2) if prev_fut_p else 0.0
     oi_chg = round(((curr_oi - prev_oi) / prev_oi * 100), 2) if prev_oi else 0.0
@@ -1118,6 +1121,9 @@ def generate_strategy_f_scenario(scenario: str = "dynamic", symbol: str = "NIFTY
             "ema21": v.get("ema_data", {}).get("ema21"),
             "ema50": v.get("ema_data", {}).get("ema50"),
             "ema_aligned": ema_aligned,
+            "ema_trend": ema_trend,
+            "stacked_bull": stacked_bull,
+            "stacked_bear": stacked_bear,
             "supertrend": v.get("supertrend_data", {}).get("val"),
             "supertrend_trend": v.get("supertrend_data", {}).get("trend"),
             "avwap": v.get("avwap_data", {}).get("avwap"),
