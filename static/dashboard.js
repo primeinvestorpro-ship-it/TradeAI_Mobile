@@ -905,12 +905,28 @@ function pollLtp() {
   const sym = (tickerInput.value || '').trim().toUpperCase() || 'RELIANCE';
   fetch(`/api/spot_ltp?ticker=${encodeURIComponent(sym)}`).then(r => r.json()).then(d => {
     if (d.ok) {
-      livePriceBox.textContent   = `₹${d.ltp.toFixed(2)}`;
+      livePriceBox.textContent    = `₹${d.ltp.toFixed(2)}`;
       livePriceTicker.textContent = d.spot_symbol || d.ticker;
+
+      // ── KPI Card 1: TOTAL SPOT / FUTURES ──────────────────────
       const kpiSpot = $('kpiSpotLtp');
       if (kpiSpot) kpiSpot.textContent = `₹${d.ltp.toFixed(2)}`;
-      const kpiFut = $('kpiFutLtp');
-      if (kpiFut) kpiFut.textContent = `${d.spot_symbol || sym} Active`;
+
+      // Real % change from prev close
+      const kpiTrend = $('kpiLtpTrend');
+      const kpiSub   = $('kpiFutLtp');
+      if (kpiTrend && d.change_pct != null) {
+        const pct    = d.change_pct;
+        const absChg = d.change_abs != null ? d.change_abs : 0;
+        const isUp   = pct >= 0;
+        const arrow  = isUp ? '↑' : '↓';
+        const cls    = isUp ? 'argon-trend text-success' : 'argon-trend text-danger';
+        kpiTrend.className   = cls;
+        kpiTrend.textContent = `${arrow} ${Math.abs(pct).toFixed(2)}%`;
+      }
+      if (kpiSub) {
+        kpiSub.textContent = `${d.spot_symbol || sym} Live`;
+      }
     }
   }).catch(() => {});
 }
@@ -2370,6 +2386,40 @@ async function refreshSustainedBreakoutDashboard() {
       if (kpiW) {
         kpiW.textContent = p2.market_bias ? p2.market_bias.replace(/_/g, ' ') : (p2.pcr >= 1.0 ? 'Put Writing Dominant' : 'Call Writing Dominant');
       }
+    }
+
+    // ── Card 4: LAST SIGNAL (replace static SCANNING) ──────────────
+    const kpiScanVal   = $('kpiScannerVal');
+    const kpiStratLine = $('kpiActiveStrategies');
+    const kpiSigCount  = $('kpiSignalsCount');
+    const dir          = p3.direction || 'NO TRADE';
+    const score        = p3.confidence_score != null ? p3.confidence_score : (p3.score != null ? p3.score : 0);
+    const isLongSig    = dir === 'LONG';
+    const isShortSig   = dir === 'SHORT';
+    const isNoTrade    = !isLongSig && !isShortSig;
+
+    if (kpiScanVal) {
+      if (isLongSig) {
+        kpiScanVal.textContent  = '▲ LONG';
+        kpiScanVal.style.color  = '#2dce89';
+      } else if (isShortSig) {
+        kpiScanVal.textContent  = '▼ SHORT';
+        kpiScanVal.style.color  = '#f5365c';
+      } else {
+        kpiScanVal.textContent  = 'NO TRADE';
+        kpiScanVal.style.color  = '#fb6340';
+      }
+    }
+    if (kpiStratLine) {
+      const sym   = p1.symbol || currentFSymbol || 'NIFTY';
+      const scoreLabel = `Score: ${score}/100`;
+      kpiStratLine.textContent  = `${scoreLabel} • ${sym}`;
+      kpiStratLine.className    = 'argon-trend ' + (isLongSig ? 'text-success' : (isShortSig ? 'text-danger' : 'text-warning'));
+    }
+    if (kpiSigCount) {
+      const setup = p3.setup_status || 'Awaiting Setup';
+      const totalSigs = _scannerSignals.length;
+      kpiSigCount.textContent = totalSigs > 0 ? `${totalSigs} Signals Active` : setup;
     }
   } catch (e) {}
 }

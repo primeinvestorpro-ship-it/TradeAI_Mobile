@@ -810,8 +810,31 @@ def spot_ltp():
         spot_symbol = futures_engine.resolve_spot_tradingsymbol(ticker)
         quote_key = f"NSE:{spot_symbol}"
         q = kite_client.get_quote([quote_key])
-        ltp = q[quote_key]["last_price"]
-        return jsonify({"ok": True, "ticker": ticker.upper(), "spot_symbol": spot_symbol, "ltp": ltp})
+        qd = q[quote_key]
+        ltp = qd["last_price"]
+        # net_change = last_price - prev_close (Kite provides this directly)
+        net_change = qd.get("net_change", 0)
+        # prev close from OHLC (Kite ohlc.close = previous day close)
+        prev_close = (qd.get("ohlc") or {}).get("close") or None
+        if prev_close and prev_close > 0:
+            change_pct = ((ltp - prev_close) / prev_close) * 100
+            change_abs = ltp - prev_close
+        elif net_change is not None and ltp > 0:
+            prev_calc = ltp - net_change
+            change_pct = (net_change / prev_calc * 100) if prev_calc > 0 else 0
+            change_abs = net_change
+        else:
+            change_pct = 0
+            change_abs = 0
+        return jsonify({
+            "ok": True,
+            "ticker": ticker.upper(),
+            "spot_symbol": spot_symbol,
+            "ltp": ltp,
+            "change_pct": round(change_pct, 2),
+            "change_abs": round(change_abs, 2),
+            "prev_close": prev_close,
+        })
     except Exception as exc:  # noqa: BLE001
         return jsonify({"ok": False, "error": str(exc)}), 500
 
