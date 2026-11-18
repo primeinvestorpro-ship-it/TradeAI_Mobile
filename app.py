@@ -1122,12 +1122,12 @@ def scanner_gti_route():
         try:
             if eng:
                 dash = eng.get_or_eval_gti(max_age_seconds=4, symbol=req_sym)
-                if dash and dash.get("gti_status", {}).get("current_candle_color"):
+                if dash and (dash.get("gti_status", {}).get("current_candle_color") or dash.get("current_candle_color")):
                     return jsonify({"ok": True, "data": dash})
             else:
                 from scanner_engine import evaluate_strategy_g_standalone
                 data = evaluate_strategy_g_standalone(client, spot_symbol=req_sym)
-                if data and data.get("current_candle_color"):
+                if data and (data.get("gti_status", {}).get("current_candle_color") or data.get("current_candle_color")):
                     return jsonify({"ok": True, "data": data})
         except Exception:
             pass

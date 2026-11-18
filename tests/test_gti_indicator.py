@@ -86,3 +86,22 @@ def test_gti_scenarios():
 
     sideways_sc = gti_indicator.generate_gti_scenario("sideways", "NIFTY")
     assert sideways_sc["filter_active"] is True
+
+
+def test_gti_multi_index_pricing():
+    # Test BANKNIFTY scenario base price and ATM option strike
+    bn_sc = gti_indicator.generate_gti_scenario("dynamic", "BANKNIFTY")
+    assert bn_sc["symbol"] == "BANKNIFTY"
+    assert bn_sc["spot_price"] > 55000.0
+    assert bn_sc["atr"] > 50.0
+
+    bn_opt = gti_indicator.calculate_atm_option(62040.0, symbol="BANKNIFTY", signal_type="BUY_CALL")
+    assert bn_opt["atm_strike"] == 62000
+
+    # Test FINNIFTY scenario base price and ATM option strike
+    fn_sc = gti_indicator.generate_gti_scenario("dynamic", "FINNIFTY")
+    assert fn_sc["symbol"] == "FINNIFTY"
+    assert 25000.0 < fn_sc["spot_price"] < 35000.0
+
+    fn_opt = gti_indicator.calculate_atm_option(28035.0, symbol="FINNIFTY", signal_type="BUY_PUT")
+    assert fn_opt["atm_strike"] == 28050

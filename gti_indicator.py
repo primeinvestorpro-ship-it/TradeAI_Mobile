@@ -353,8 +353,13 @@ def calculate_atm_option(
       - Put: Suggests ATM PE
       - Includes Strike, estimated LTP, Delta, IV, and standard risk levels
     """
-    sym_upper = symbol.upper()
-    step = ATM_STEPS.get(sym_upper, 50)
+    sym_upper = (symbol or "").strip().upper()
+    if "BANK" in sym_upper:
+        step = 100
+    elif "MIDCP" in sym_upper:
+        step = 25
+    else:
+        step = 50
     atm_strike = int(round(spot_price / step) * step)
 
     opt_type = "CE" if signal_type in ("BUY_CALL", "CALL") else "PE"
@@ -434,6 +439,11 @@ def evaluate_gti_strategy(
         }
 
     curr_spot = float(spot_price if spot_price is not None else candles_5m[-1].get("close", 0))
+    # Keep the current live candle's close, high, low in sync with live spot tick
+    if spot_price is not None and candles_5m:
+        candles_5m[-1]["close"] = curr_spot
+        candles_5m[-1]["high"] = max(float(candles_5m[-1].get("high", curr_spot)), curr_spot)
+        candles_5m[-1]["low"] = min(float(candles_5m[-1].get("low", curr_spot)), curr_spot)
 
     # Classify candles
     classified = classify_gti_candles_series(
@@ -447,18 +457,28 @@ def evaluate_gti_strategy(
 
     # Compute ATR & ADX
     atrs = compute_atr(candles_5m, period=atr_period)
-    curr_atr = atrs[-1] if atrs and atrs[-1] is not None else 25.0
+    curr_atr = atrs[-1] if atrs and atrs[-1] is not None else (curr_spot * 0.0012)
     vol_mas = compute_volume_ma(candles_5m, period=vol_period)
     curr_vol_ma = vol_mas[-1] if vol_mas else 1000.0
     curr_vol = float(candles_5m[-1].get("volume", 0) or 0)
     adx_val, adx_market_status = compute_adx(candles_5m, period=14)
 
+    # If raw spot candle has volume=0 (NSE index spot), derive effective volume ratio from range expansion vs ATR
+    if (curr_vol <= 0 or curr_vol_ma <= 0) and curr_atr > 0:
+        c_h = float(candles_5m[-1].get("high", curr_spot))
+        c_l = float(candles_5m[-1].get("low", curr_spot))
+        c_range = max(c_h - c_l, 0.5)
+        derived_ratio = round(c_range / (curr_atr * 0.70), 2)
+        last_candle["vol_ratio"] = max(0.6, min(derived_ratio, 3.5))
+
     # ── Epic 6: Time Filter ──
     time_window_open, time_msg = check_trading_time_window(override_time)
 
     # ── Epic 5: Fake Signal Filters ──
-    atr_filter_passed = curr_atr >= min_atr_threshold
-    vol_filter_passed = curr_vol >= (0.50 * curr_vol_ma) if curr_vol_ma > 0 else True
+    # Dynamic ATR threshold based on index spot scale (~0.05% of price)
+    effective_min_atr = max(10.0, curr_spot * 0.0005) if min_atr_threshold == 12.0 else min_atr_threshold
+    atr_filter_passed = curr_atr >= effective_min_atr
+    vol_filter_passed = (curr_vol >= (0.50 * curr_vol_ma)) if (curr_vol > 0 and curr_vol_ma > 0) else True
     market_not_sideways = adx_market_status != "SIDEWAYS"
 
     filter_active = not (time_window_open and atr_filter_passed and vol_filter_passed and market_not_sideways)
@@ -466,7 +486,7 @@ def evaluate_gti_strategy(
     if not time_window_open:
         filter_reasons.append(time_msg)
     if not atr_filter_passed:
-        filter_reasons.append(f"Low Volatility Filter (ATR {curr_atr:.1f} < {min_atr_threshold}) — Signals Paused")
+        filter_reasons.append(f"Low Volatility Filter (ATR {curr_atr:.1f} < {effective_min_atr:.1f}) — Signals Paused")
     if not vol_filter_passed:
         filter_reasons.append("Low Volume Filter (Volume < 50% of 20-MA) — Signals Paused")
     if not market_not_sideways:
@@ -629,7 +649,17 @@ def generate_gti_scenario(
       - 'yellow': Smart Money Accumulation detected (Yellow candle active)
       - 'sideways': Low volatility / choppy range (signals paused by filters)
     """
-    base_price = 25250.0 if "NIFTY" in symbol.upper() else 51500.0
+    sym_up = (symbol or "").strip().upper()
+    if "BANK" in sym_up:
+        base_price = 62050.0
+        scale = 2.4
+    elif "FIN" in sym_up:
+        base_price = 28000.0
+        scale = 1.1
+    else:
+        base_price = 25250.0
+        scale = 1.0
+
     if tick_offset is not None:
         base_price += tick_offset
 
@@ -639,12 +669,12 @@ def generate_gti_scenario(
     # Generate 30 baseline 5m candles
     for i in range(30, 0, -1):
         c_time = int((now - datetime.timedelta(minutes=i * 5)).timestamp())
-        step_drift = math.sin(i * 0.4) * 15.0
+        step_drift = math.sin(i * 0.4) * (15.0 * scale)
         c_open = base_price + step_drift
-        c_high = c_open + 14.0
-        c_low = c_open - 12.0
-        c_close = c_open + (8.0 if i % 2 == 0 else -6.0)
-        c_vol = 65000 + (i * 1200)
+        c_high = c_open + (14.0 * scale)
+        c_low = c_open - (12.0 * scale)
+        c_close = c_open + ((8.0 if i % 2 == 0 else -6.0) * scale)
+        c_vol = int((65000 + (i * 1200)) * (0.8 if "BANK" in sym_up else 1.0))
         candles.append({
             "time": c_time,
             "open": round(c_open, 2),
@@ -664,53 +694,53 @@ def generate_gti_scenario(
     if sc in ("call", "bullish"):
         # Candle -2: Yellow accumulation candle (narrow range, body small, normal volume)
         y_open = base_price
-        y_high = base_price + 10.0
-        y_low = base_price - 8.0
-        y_close = base_price + 2.0
-        candles[-2] = {"time": prev_t1, "open": y_open, "high": y_high, "low": y_low, "close": y_close, "volume": 72000}
+        y_high = base_price + (10.0 * scale)
+        y_low = base_price - (8.0 * scale)
+        y_close = base_price + (2.0 * scale)
+        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(72000 * scale)}
 
         # Current Candle: Blue momentum breakout (breaks y_high, large green body, 2.1x volume)
-        b_open = base_price + 3.0
-        b_close = base_price + 45.0
-        b_high = base_price + 48.0
-        b_low = base_price + 1.0
-        b_vol = 175000  # 2.3x average
-        candles[-1] = {"time": curr_t, "open": b_open, "high": b_high, "low": b_low, "close": b_close, "volume": b_vol}
+        b_open = base_price + (3.0 * scale)
+        b_close = base_price + (45.0 * scale)
+        b_high = base_price + (48.0 * scale)
+        b_low = base_price + (1.0 * scale)
+        b_vol = int(175000 * scale)
+        candles[-1] = {"time": curr_t, "open": round(b_open, 2), "high": round(b_high, 2), "low": round(b_low, 2), "close": round(b_close, 2), "volume": b_vol}
         override_time = datetime.time(10, 15)  # Approved morning window
 
     elif sc in ("put", "bearish"):
         # Candle -2: Yellow accumulation/distribution candle
         y_open = base_price
-        y_high = base_price + 8.0
-        y_low = base_price - 9.0
-        y_close = base_price - 2.0
-        candles[-2] = {"time": prev_t1, "open": y_open, "high": y_high, "low": y_low, "close": y_close, "volume": 70000}
+        y_high = base_price + (8.0 * scale)
+        y_low = base_price - (9.0 * scale)
+        y_close = base_price - (2.0 * scale)
+        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(70000 * scale)}
 
         # Current Candle: Black momentum breakdown (breaks y_low, large red body, 2.2x volume)
-        b_open = base_price - 3.0
-        b_close = base_price - 48.0
-        b_high = base_price - 1.0
-        b_low = base_price - 50.0
-        b_vol = 180000  # 2.4x average
-        candles[-1] = {"time": curr_t, "open": b_open, "high": b_high, "low": b_low, "close": b_close, "volume": b_vol}
+        b_open = base_price - (3.0 * scale)
+        b_close = base_price - (48.0 * scale)
+        b_high = base_price - (1.0 * scale)
+        b_low = base_price - (50.0 * scale)
+        b_vol = int(180000 * scale)
+        candles[-1] = {"time": curr_t, "open": round(b_open, 2), "high": round(b_high, 2), "low": round(b_low, 2), "close": round(b_close, 2), "volume": b_vol}
         override_time = datetime.time(14, 0)  # Approved afternoon window
 
     elif sc in ("yellow", "accumulation"):
         # Current Candle is Yellow (Smart Money Accumulation)
         y_open = base_price
-        y_high = base_price + 6.0
-        y_low = base_price - 6.0
-        y_close = base_price + 1.0
-        candles[-1] = {"time": curr_t, "open": y_open, "high": y_high, "low": y_low, "close": y_close, "volume": 68000}
+        y_high = base_price + (6.0 * scale)
+        y_low = base_price - (6.0 * scale)
+        y_close = base_price + (1.0 * scale)
+        candles[-1] = {"time": curr_t, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(68000 * scale)}
         override_time = datetime.time(10, 30)
 
     elif sc in ("sideways", "filter"):
         # Sideways choppy range with very low volume
         for j in range(-5, 0):
-            candles[j]["high"] = base_price + 4.0
-            candles[j]["low"] = base_price - 4.0
-            candles[j]["open"] = base_price - 1.0
-            candles[j]["close"] = base_price + 1.0
+            candles[j]["high"] = round(base_price + (4.0 * scale), 2)
+            candles[j]["low"] = round(base_price - (4.0 * scale), 2)
+            candles[j]["open"] = round(base_price - (1.0 * scale), 2)
+            candles[j]["close"] = round(base_price + (1.0 * scale), 2)
             candles[j]["volume"] = 28000  # < 50% average
         override_time = datetime.time(12, 15)  # Lunch time filter active
 

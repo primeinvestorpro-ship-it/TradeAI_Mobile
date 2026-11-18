@@ -2436,14 +2436,28 @@ let currentGtiSymbol = 'NIFTY';
 let currentGtiScenario = '';
 
 window.setGtiStrategyScenario = function(sc) {
-  currentGtiScenario = sc;
+  currentGtiScenario = (sc === 'dynamic' ? '' : sc);
+  refreshGtiDashboard();
+};
+
+window.onGtiSymbolChanged = function() {
+  const sel = $('gtiSymbolSelect');
+  if (sel && sel.value) {
+    currentGtiSymbol = sel.value;
+  }
+  currentGtiScenario = '';
   refreshGtiDashboard();
 };
 
 async function refreshGtiDashboard() {
   try {
     const sel = $('gtiSymbolSelect');
-    if (sel && sel.value) currentGtiSymbol = sel.value;
+    if (sel && sel.value) {
+      if (currentGtiSymbol !== sel.value) {
+        currentGtiSymbol = sel.value;
+        currentGtiScenario = '';
+      }
+    }
     let url = `/api/scanner/gti?symbol=${encodeURIComponent(currentGtiSymbol)}`;
     if (currentGtiScenario) url += `&scenario=${encodeURIComponent(currentGtiScenario)}`;
 
