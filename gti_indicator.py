@@ -559,6 +559,13 @@ def evaluate_gti_strategy(
         risk_dist = max(curr_spot - structure_sl, curr_atr * 0.8)
         target1 = round(curr_spot + (risk_dist * 1.5), 2)
         target2 = round(curr_spot + (risk_dist * 2.0), 2)  # 1:2 Target
+        entry_price = round(curr_spot, 2)
+        suggested_option = calculate_atm_option(
+            spot_price=curr_spot,
+            symbol=symbol,
+            signal_type="BUY_CALL",
+            iv_percent=14.5,
+        )
     elif is_put_signal:
         direction = "BUY_PUT"
         signal_badge = "⚫ BUY PUT"
@@ -567,30 +574,69 @@ def evaluate_gti_strategy(
         risk_dist = max(structure_sl - curr_spot, curr_atr * 0.8)
         target1 = round(curr_spot - (risk_dist * 1.5), 2)
         target2 = round(curr_spot - (risk_dist * 2.0), 2)  # 1:2 Target
-    elif curr_color == CANDLE_COLOR_YELLOW:
-        direction = "ACCUMULATION"
-        signal_badge = "🟡 ACCUMULATION"
-        signal_status = "SMART MONEY ACCUMULATION (Wait for Blue/Black Breakout)"
-        structure_sl = None
-        target1 = None
-        target2 = None
-    else:
-        direction = "WAIT"
-        signal_badge = "WAIT"
-        signal_status = "Awaiting GTI Setup (Yellow Accumulation + Momentum Breakout)"
-        structure_sl = None
-        target1 = None
-        target2 = None
-
-    # Option suggestion (Epic 3)
-    suggested_option = None
-    if direction in ("BUY_CALL", "BUY_PUT"):
+        entry_price = round(curr_spot, 2)
         suggested_option = calculate_atm_option(
             spot_price=curr_spot,
             symbol=symbol,
-            signal_type=direction,
+            signal_type="BUY_PUT",
             iv_percent=14.5,
         )
+    elif curr_color == CANDLE_COLOR_YELLOW or has_recent_yellow:
+        direction = "ACCUMULATION"
+        signal_badge = "🟡 SMART MONEY ACCUMULATION"
+        signal_status = "SMART MONEY ACCUMULATION (Wait for Blue/Black Breakout)"
+        ref_h = yellow_high or float(candles_5m[-1].get("high", curr_spot))
+        ref_l = yellow_low or float(candles_5m[-1].get("low", curr_spot))
+        risk_dist = max(ref_h - ref_l, curr_atr * 0.8)
+        entry_price = round(ref_h, 2)
+        structure_sl = round(ref_l, 2)
+        target1 = round(ref_h + (risk_dist * 1.5), 2)
+        target2 = round(ref_h + (risk_dist * 2.0), 2)
+        calc_opt = calculate_atm_option(
+            spot_price=curr_spot,
+            symbol=symbol,
+            signal_type="BUY_CALL",
+            iv_percent=14.5,
+        )
+        suggested_option = {
+            "atm_strike": calc_opt["atm_strike"],
+            "option_type": "CE / PE",
+            "tradingsymbol": f"{symbol} {calc_opt['atm_strike']} CE / PE (Watch)",
+            "estimated_ltp": calc_opt["estimated_ltp"],
+            "delta": 0.50,
+            "iv": calc_opt["iv"],
+            "option_stop_loss": calc_opt["option_stop_loss"],
+            "option_target": calc_opt["option_target"],
+            "expiry": calc_opt.get("expiry"),
+            "note": "Smart Money Base Watch — CE above Yellow High, PE below Yellow Low",
+        }
+    else:
+        direction = "WAIT"
+        signal_badge = "WAIT / NO TRADE"
+        signal_status = "Awaiting GTI Setup (Yellow Accumulation + Momentum Breakout)"
+        risk_dist = max(swing_high - swing_low, curr_atr * 0.8)
+        entry_price = round(curr_spot, 2)
+        structure_sl = round(swing_low, 2)
+        target1 = round(curr_spot + (risk_dist * 1.5), 2)
+        target2 = round(curr_spot + (risk_dist * 2.0), 2)
+        calc_opt = calculate_atm_option(
+            spot_price=curr_spot,
+            symbol=symbol,
+            signal_type="BUY_CALL",
+            iv_percent=14.5,
+        )
+        suggested_option = {
+            "atm_strike": calc_opt["atm_strike"],
+            "option_type": "CE / PE",
+            "tradingsymbol": f"{symbol} {calc_opt['atm_strike']} CE / PE (Awaiting Base)",
+            "estimated_ltp": calc_opt["estimated_ltp"],
+            "delta": 0.50,
+            "iv": calc_opt["iv"],
+            "option_stop_loss": calc_opt["option_stop_loss"],
+            "option_target": calc_opt["option_target"],
+            "expiry": calc_opt.get("expiry"),
+            "note": "Awaiting Yellow Accumulation Candle Setup",
+        }
 
     # Check final trigger passed
     signal_passed = (is_call_signal or is_put_signal) and not filter_active
@@ -620,7 +666,10 @@ def evaluate_gti_strategy(
         "time_window_status": time_msg,
         "filter_active": filter_active,
         "filter_reasons": filter_reasons,
-        "entry_price": curr_spot if (is_call_signal or is_put_signal) else None,
+        "atr_filter_passed": atr_filter_passed,
+        "vol_filter_passed": vol_filter_passed,
+        "market_not_sideways": market_not_sideways,
+        "entry_price": entry_price,
         "structure_stop_loss": structure_sl,
         "target1": target1,
         "target2": target2,
@@ -691,20 +740,22 @@ def generate_gti_scenario(
 
     sc = scenario.lower()
 
+    vol_factor = 0.8 if "BANK" in sym_up else 1.0
+
     if sc in ("call", "bullish"):
         # Candle -2: Yellow accumulation candle (narrow range, body small, normal volume)
         y_open = base_price
         y_high = base_price + (10.0 * scale)
         y_low = base_price - (8.0 * scale)
         y_close = base_price + (2.0 * scale)
-        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(72000 * scale)}
+        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(72000 * vol_factor)}
 
         # Current Candle: Blue momentum breakout (breaks y_high, large green body, 2.1x volume)
         b_open = base_price + (3.0 * scale)
         b_close = base_price + (45.0 * scale)
         b_high = base_price + (48.0 * scale)
         b_low = base_price + (1.0 * scale)
-        b_vol = int(175000 * scale)
+        b_vol = int(170000 * vol_factor)
         candles[-1] = {"time": curr_t, "open": round(b_open, 2), "high": round(b_high, 2), "low": round(b_low, 2), "close": round(b_close, 2), "volume": b_vol}
         override_time = datetime.time(10, 15)  # Approved morning window
 
@@ -714,14 +765,14 @@ def generate_gti_scenario(
         y_high = base_price + (8.0 * scale)
         y_low = base_price - (9.0 * scale)
         y_close = base_price - (2.0 * scale)
-        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(70000 * scale)}
+        candles[-2] = {"time": prev_t1, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(70000 * vol_factor)}
 
         # Current Candle: Black momentum breakdown (breaks y_low, large red body, 2.2x volume)
         b_open = base_price - (3.0 * scale)
         b_close = base_price - (48.0 * scale)
         b_high = base_price - (1.0 * scale)
         b_low = base_price - (50.0 * scale)
-        b_vol = int(180000 * scale)
+        b_vol = int(175000 * vol_factor)
         candles[-1] = {"time": curr_t, "open": round(b_open, 2), "high": round(b_high, 2), "low": round(b_low, 2), "close": round(b_close, 2), "volume": b_vol}
         override_time = datetime.time(14, 0)  # Approved afternoon window
 
@@ -731,7 +782,7 @@ def generate_gti_scenario(
         y_high = base_price + (6.0 * scale)
         y_low = base_price - (6.0 * scale)
         y_close = base_price + (1.0 * scale)
-        candles[-1] = {"time": curr_t, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(68000 * scale)}
+        candles[-1] = {"time": curr_t, "open": round(y_open, 2), "high": round(y_high, 2), "low": round(y_low, 2), "close": round(y_close, 2), "volume": int(68000 * vol_factor)}
         override_time = datetime.time(10, 30)
 
     elif sc in ("sideways", "filter"):
@@ -741,7 +792,7 @@ def generate_gti_scenario(
             candles[j]["low"] = round(base_price - (4.0 * scale), 2)
             candles[j]["open"] = round(base_price - (1.0 * scale), 2)
             candles[j]["close"] = round(base_price + (1.0 * scale), 2)
-            candles[j]["volume"] = 28000  # < 50% average
+            candles[j]["volume"] = int(26000 * vol_factor)  # < 50% average
         override_time = datetime.time(12, 15)  # Lunch time filter active
 
     else:

@@ -1122,6 +1122,9 @@ class ScannerEngine:
                     "time_window_status": gti_data.get("time_window_status"),
                     "filter_active": gti_data.get("filter_active"),
                     "filter_reasons": gti_data.get("filter_reasons", []),
+                    "atr_filter_passed": gti_data.get("atr_filter_passed", True),
+                    "vol_filter_passed": gti_data.get("vol_filter_passed", True),
+                    "market_not_sideways": gti_data.get("market_not_sideways", True),
                     "timestamp": datetime.datetime.now().isoformat(),
                 },
                 "signal": {
@@ -1423,6 +1426,9 @@ def evaluate_strategy_g_standalone(kite_client, spot_symbol="NIFTY"):
                 "time_window_status": gti_data.get("time_window_status"),
                 "filter_active": gti_data.get("filter_active"),
                 "filter_reasons": gti_data.get("filter_reasons", []),
+                "atr_filter_passed": gti_data.get("atr_filter_passed", True),
+                "vol_filter_passed": gti_data.get("vol_filter_passed", True),
+                "market_not_sideways": gti_data.get("market_not_sideways", True),
                 "timestamp": datetime.datetime.now().isoformat(),
             },
             "signal": {

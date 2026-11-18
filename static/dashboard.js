@@ -2578,31 +2578,70 @@ async function refreshGtiDashboard() {
     }
 
     const gtiOptSymbol = $('gtiOptSymbol');
-    if (gtiOptSymbol) gtiOptSymbol.textContent = opt.tradingsymbol || '—';
+    if (gtiOptSymbol) {
+      gtiOptSymbol.textContent = opt.tradingsymbol || (opt.atm_strike ? `${currentGtiSymbol} ${opt.atm_strike} CE/PE` : '—');
+    }
+
+    const isConfirmed = (signal.direction === 'BUY_CALL' || signal.direction === 'BUY_PUT');
 
     const gtiOptLtp = $('gtiOptLtp');
-    if (gtiOptLtp) gtiOptLtp.textContent = opt.estimated_ltp != null ? `₹${Number(opt.estimated_ltp).toFixed(2)}` : '₹—';
+    if (gtiOptLtp) {
+      if (opt.estimated_ltp != null) {
+        const suffix = isConfirmed ? '' : ' (Est. ATM)';
+        gtiOptLtp.textContent = `₹${Number(opt.estimated_ltp).toFixed(2)}${suffix}`;
+      } else {
+        gtiOptLtp.textContent = '₹—';
+      }
+    }
 
     const gtiOptGreeks = $('gtiOptGreeks');
     if (gtiOptGreeks) {
-      const dVal = opt.delta != null ? opt.delta : '—';
-      const ivVal = opt.iv != null ? `${opt.iv}%` : '—';
+      const dVal = opt.delta != null ? opt.delta : (isConfirmed ? '—' : '±0.50');
+      const ivVal = opt.iv != null ? `${opt.iv}%` : '14.5%';
       gtiOptGreeks.textContent = `Δ: ${dVal} | IV: ${ivVal}`;
     }
 
     const gtiOptSl = $('gtiOptSl');
-    if (gtiOptSl) gtiOptSl.textContent = opt.option_stop_loss != null ? `₹${Number(opt.option_stop_loss).toFixed(2)} (-22%)` : '—';
+    if (gtiOptSl) {
+      if (opt.option_stop_loss != null) {
+        gtiOptSl.textContent = `₹${Number(opt.option_stop_loss).toFixed(2)} (-22% SL)`;
+      } else {
+        gtiOptSl.textContent = '—';
+      }
+    }
 
     const gtiOptTarget = $('gtiOptTarget');
-    if (gtiOptTarget) gtiOptTarget.textContent = opt.option_target != null ? `₹${Number(opt.option_target).toFixed(2)} (1:2 R:R)` : '—';
+    if (gtiOptTarget) {
+      if (opt.option_target != null) {
+        gtiOptTarget.textContent = `₹${Number(opt.option_target).toFixed(2)} (1:2 R:R)`;
+      } else {
+        gtiOptTarget.textContent = '—';
+      }
+    }
 
     // Panel 3: Risk & Filters
     const gtiSpotLevels = $('gtiSpotLevels');
     if (gtiSpotLevels) {
-      const ep = signal.entry_price != null ? `Entry: ₹${Number(signal.entry_price).toFixed(2)}` : 'Entry: —';
-      const sl = signal.structure_stop_loss != null ? `SL: ₹${Number(signal.structure_stop_loss).toFixed(2)}` : 'SL: —';
-      const t2 = signal.target2 != null ? `Tgt: ₹${Number(signal.target2).toFixed(2)}` : 'Tgt: —';
-      gtiSpotLevels.textContent = `${ep} | ${sl} | ${t2}`;
+      if (signal.direction === 'BUY_CALL' || signal.direction === 'BUY_PUT') {
+        const ep = signal.entry_price != null ? `Entry: ₹${Number(signal.entry_price).toFixed(2)}` : 'Entry: —';
+        const sl = signal.structure_stop_loss != null ? `SL: ₹${Number(signal.structure_stop_loss).toFixed(2)}` : 'SL: —';
+        const t2 = signal.target2 != null ? `Tgt: ₹${Number(signal.target2).toFixed(2)}` : 'Tgt: —';
+        gtiSpotLevels.textContent = `${ep} | ${sl} | ${t2}`;
+      } else if (signal.direction === 'ACCUMULATION') {
+        const yh = gtiStatus.yellow_candle_high != null ? Number(gtiStatus.yellow_candle_high).toFixed(2) : (signal.entry_price != null ? Number(signal.entry_price).toFixed(2) : null);
+        const yl = gtiStatus.yellow_candle_low != null ? Number(gtiStatus.yellow_candle_low).toFixed(2) : (signal.structure_stop_loss != null ? Number(signal.structure_stop_loss).toFixed(2) : null);
+        if (yh && yl) {
+          gtiSpotLevels.textContent = `Bull: >₹${yh} | Bear: <₹${yl} (SL Opposite | 1:2 R:R)`;
+        } else {
+          const ep = signal.entry_price != null ? `Ref H: ₹${Number(signal.entry_price).toFixed(2)}` : '—';
+          const sl = signal.structure_stop_loss != null ? `Ref L: ₹${Number(signal.structure_stop_loss).toFixed(2)}` : '—';
+          gtiSpotLevels.textContent = `Range: ${sl} - ${ep} (1:2 R:R Planned)`;
+        }
+      } else {
+        const ep = signal.entry_price != null ? `Ref H: ₹${Number(signal.entry_price).toFixed(2)}` : '—';
+        const sl = signal.structure_stop_loss != null ? `Ref L: ₹${Number(signal.structure_stop_loss).toFixed(2)}` : '—';
+        gtiSpotLevels.textContent = `Range: ${sl} - ${ep} (1:2 R:R Planned)`;
+      }
     }
 
     const gtiFilterBadge = $('gtiFilterBadge');
@@ -2621,8 +2660,21 @@ async function refreshGtiDashboard() {
 
     const gtiAtrVolFilterStatus = $('gtiAtrVolFilterStatus');
     if (gtiAtrVolFilterStatus) {
-      gtiAtrVolFilterStatus.textContent = 'Approved (ATR & Vol Spike Verified)';
-      gtiAtrVolFilterStatus.className = 'f-value gti-filter-pass';
+      const reasons = gtiStatus.filter_reasons || [];
+      const hasVolFilter = reasons.some(r => r.toLowerCase().includes('volume'));
+      const hasAtrFilter = reasons.some(r => r.toLowerCase().includes('volatility') || r.toLowerCase().includes('atr'));
+      if (hasAtrFilter) {
+        gtiAtrVolFilterStatus.textContent = 'Paused (Low Volatility Filter Active)';
+        gtiAtrVolFilterStatus.className = 'f-value gti-filter-paused';
+      } else if (hasVolFilter) {
+        gtiAtrVolFilterStatus.textContent = 'Paused (Low Volume < 50% 20-MA)';
+        gtiAtrVolFilterStatus.className = 'f-value gti-filter-paused';
+      } else {
+        const atr = gtiStatus.atr != null ? Number(gtiStatus.atr).toFixed(1) : '—';
+        const vr = gtiStatus.vol_ratio != null ? `${Number(gtiStatus.vol_ratio).toFixed(2)}x` : '1.0x';
+        gtiAtrVolFilterStatus.textContent = `Approved (ATR: ${atr} pts | Vol: ${vr})`;
+        gtiAtrVolFilterStatus.className = 'f-value gti-filter-pass';
+      }
     }
 
     const gtiAdxFilterStatus = $('gtiAdxFilterStatus');
