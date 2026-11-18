@@ -2426,3 +2426,26 @@ async function refreshSustainedBreakoutDashboard() {
 
 setInterval(refreshSustainedBreakoutDashboard, 3000);
 setTimeout(refreshSustainedBreakoutDashboard, 1000);
+
+// ── Page-load Bootstrap ─────────────────────────────────────────────────────
+// If the server already knows we're logged in (from token.json restore),
+// immediately activate all pollers without waiting for a SocketIO event.
+(function bootstrapOnLoad() {
+  if (window.SERVER_LOGGED_IN === true) {
+    // Trigger full login state: starts LTP poller, enables buttons, etc.
+    setLoggedIn(true, window.SERVER_USER_NAME || '');
+    // Also kick off chart and reports
+    setTimeout(() => {
+      loadSpotChart();
+      loadReports();
+    }, 500);
+  } else {
+    // Not logged in via server — do a quick /api/status check on load
+    fetch('/api/status').then(r => r.json()).then(d => {
+      if (d.logged_in) {
+        setLoggedIn(true, d.user_name || '');
+        setTimeout(() => { loadSpotChart(); loadReports(); }, 500);
+      }
+    }).catch(() => {});
+  }
+})();
