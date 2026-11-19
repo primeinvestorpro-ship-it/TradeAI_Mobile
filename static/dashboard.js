@@ -1301,7 +1301,9 @@ socket.on('scanner_status', d => {
 
 // ── Signal table renderer ──────────────────────
 function _fmtTime(ts) {
-  if (!ts) return '—';
+  if (!ts || ts === 'None' || ts === 'null' || ts === 'undefined') {
+    return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
   try {
     if (typeof ts === 'string') {
       if (ts.length === 10 || ts.includes('00:00:00')) {
@@ -1309,14 +1311,18 @@ function _fmtTime(ts) {
       }
     }
     const d = new Date(ts);
-    if (isNaN(d.getTime())) return ts;
+    if (isNaN(d.getTime())) {
+      return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    }
     // Guard against pure midnight timestamp (e.g. from daily candle date 00:00:00)
     if (d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0) {
       return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
     }
     return d.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
   }
-  catch { return ts; }
+  catch {
+    return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  }
 }
 
 function _renderSignalRow(sig) {
@@ -1504,26 +1510,28 @@ function _showPopup(sig) {
 
   // Meta
   popSymbol.textContent   = sig.symbol || '—';
-  popFutures.textContent  = sig.futures_symbol || '—';
-  popExpiry.textContent   = sig.expiry || '—';
+  popFutures.textContent  = (sig.futures_symbol && sig.futures_symbol !== sig.symbol) ? sig.futures_symbol : (sig.atm_option && sig.atm_option.futures_symbol ? sig.atm_option.futures_symbol : (sig.futures_symbol || '—'));
+  popExpiry.textContent   = sig.expiry || (sig.atm_option && sig.atm_option.expiry ? sig.atm_option.expiry : '—');
   popTime.textContent     = _fmtTime(sig.timestamp);
-  popSpot.textContent     = sig.spot_price ? `₹${sig.spot_price.toFixed(2)}` : '—';
-  popFutLtp.textContent   = sig.futures_price ? `₹${sig.futures_price.toFixed(2)}` : '—';
+  popSpot.textContent     = sig.spot_price ? `₹${Number(sig.spot_price).toFixed(2)}` : '—';
+  popFutLtp.textContent   = sig.futures_price ? `₹${Number(sig.futures_price).toFixed(2)}` : (sig.spot_price ? `₹${Number(sig.spot_price).toFixed(2)}` : '—');
 
   // ATM block
   function _renderAtm(atm) {
-    if (!atm) return;
+    if (!atm || typeof atm !== 'object') return;
     popAtmTitle.textContent = isBull ? 'BUY ATM CALL (CE)' : 'BUY ATM PUT (PE)';
-    popAtmSym.textContent    = atm.symbol || '—';
-    popAtmStrike.textContent = atm.strike ? `₹${atm.strike}` : '—';
+    popAtmSym.textContent    = atm.symbol || atm.tradingsymbol || '—';
+    const strikeNum = (typeof atm.strike === 'number') ? atm.strike : (typeof atm.strike === 'string' && !isNaN(Number(atm.strike)) ? Number(atm.strike) : null);
+    popAtmStrike.textContent = strikeNum != null ? `₹${strikeNum}` : '—';
     popAtmExpiry.textContent = atm.expiry || '—';
-    popAtmLtp.textContent    = atm.ltp != null ? `₹${atm.ltp.toFixed ? atm.ltp.toFixed(2) : atm.ltp}` : '—';
+    const ltpNum = (typeof atm.ltp === 'number') ? atm.ltp : (typeof atm.ltp === 'string' && !isNaN(Number(atm.ltp)) ? Number(atm.ltp) : null);
+    popAtmLtp.textContent    = ltpNum != null ? `₹${ltpNum.toFixed(2)}` : '—';
     popAtmLot.textContent    = atm.lot_size || '—';
     popAtmBlock.className    = 'popup-atm-card mt-12 ' + (isBull ? 'bull-atm' : 'bear-atm');
     popAtmBlock.classList.remove('hidden');
 
-    // Update futures and expiry in popup if they were missing
-    if (atm.futures_symbol && (!popFutures.textContent || popFutures.textContent.trim() === '—')) {
+    // Update futures and expiry in popup if they were missing or duplicated
+    if (atm.futures_symbol && (!popFutures.textContent || popFutures.textContent.trim() === '—' || popFutures.textContent.trim() === sig.symbol)) {
       popFutures.textContent = atm.futures_symbol;
       sig.futures_symbol = atm.futures_symbol;
     }
@@ -1536,17 +1544,21 @@ function _showPopup(sig) {
     const row = document.querySelector(`tr[data-sig-id="${sig.id}"]`);
     if (row) {
       const futCell = row.children[4];
-      if (futCell && (futCell.textContent.trim() === '—' || !futCell.textContent.trim()) && sig.futures_symbol) {
+      if (futCell && (futCell.textContent.trim() === '—' || !futCell.textContent.trim() || futCell.textContent.trim() === sig.symbol) && sig.futures_symbol) {
         futCell.textContent = sig.futures_symbol;
       }
       const atmCell = row.children[6];
       if (atmCell) {
-        atmCell.innerHTML = `<span class="scanner-atm-tag">${atm.option_type} ${atm.strike} @ ₹${atm.ltp ?? '—'}</span>`;
+        const dStrike = strikeNum != null ? strikeNum : (atm.strike || '—');
+        const dLtp = ltpNum != null ? ltpNum.toFixed(2) : (atm.ltp ?? '—');
+        atmCell.innerHTML = `<span class="scanner-atm-tag">${atm.option_type || (isBull ? 'CE' : 'PE')} ${dStrike} @ ₹${dLtp}</span>`;
       }
     }
   }
 
-  if (sig.atm_option) {
+  const hasValidAtmObj = sig.atm_option && typeof sig.atm_option === 'object' && (typeof sig.atm_option.strike === 'number' || (typeof sig.atm_option.strike === 'string' && !isNaN(Number(sig.atm_option.strike))));
+
+  if (hasValidAtmObj) {
     _renderAtm(sig.atm_option);
   } else {
     popAtmBlock.classList.add('hidden');

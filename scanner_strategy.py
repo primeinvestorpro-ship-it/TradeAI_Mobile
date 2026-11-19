@@ -24,15 +24,21 @@ def _make_signal(strategy_id, strategy_name, direction, symbol,
                  futures_symbol, expiry, candle_ts, conditions,
                  spot_price=None, futures_price=None, atm_option=None, values=None):
     """Build a standardised signal dict."""
+    if not candle_ts or str(candle_ts).strip() in ("None", "null", ""):
+        candle_ts = datetime.datetime.now()
+
+    id_ts_str = candle_ts.strftime('%Y%m%d_%H%M') if hasattr(candle_ts, 'strftime') else str(candle_ts)[:16]
+    iso_ts = candle_ts.isoformat() if hasattr(candle_ts, 'isoformat') else str(candle_ts)
+
     return {
-        "id": f"{strategy_id}_{symbol}_{candle_ts.strftime('%Y%m%d_%H%M') if hasattr(candle_ts, 'strftime') else candle_ts}",
+        "id": f"{strategy_id}_{symbol}_{id_ts_str}",
         "strategy_id":    strategy_id,
         "strategy_name":  strategy_name,
         "direction":      direction,
         "symbol":         symbol,
         "futures_symbol": futures_symbol,
         "expiry":         str(expiry) if expiry else None,
-        "timestamp":      candle_ts.isoformat() if hasattr(candle_ts, 'isoformat') else str(candle_ts),
+        "timestamp":      iso_ts,
         "timeframe":      "5minute",
         "spot_price":     spot_price,
         "futures_price":  futures_price,
@@ -929,6 +935,7 @@ def evaluate_strategy_g(
     symbol="NIFTY",
     spot_price=None,
     futures_symbol=None,
+    futures_price=None,
     expiry=None,
     candle_ts=None,
     atr_period=14,
@@ -964,7 +971,27 @@ def evaluate_strategy_g(
     direction = raw_res.get("direction", "WAIT")
     sig = None
     if passed and direction in ("BUY_CALL", "BUY_PUT"):
-        ts = candle_ts or (candles_5m[-1].get("time") if candles_5m else datetime.datetime.now())
+        ts = candle_ts or (candles_5m[-1].get("date") or candles_5m[-1].get("time") if candles_5m else datetime.datetime.now())
+        if not ts or str(ts).strip() in ("None", "null", ""):
+            ts = datetime.datetime.now()
+
+        # Prepare structured option dictionary if available
+        sug_opt = raw_res.get("suggested_option")
+        atm_dict = None
+        if isinstance(sug_opt, dict) and sug_opt.get("atm_strike"):
+            lot_sz = 30 if "BANK" in symbol.upper() else (65 if "FIN" in symbol.upper() else 75)
+            opt_t = "CE" if direction == "BUY_CALL" else "PE"
+            atm_dict = {
+                "symbol": sug_opt.get("tradingsymbol") or f"{symbol} {sug_opt.get('atm_strike')} {opt_t}",
+                "strike": float(sug_opt.get("atm_strike")),
+                "option_type": opt_t,
+                "expiry": expiry or sug_opt.get("expiry") or "Current Expiry",
+                "ltp": sug_opt.get("estimated_ltp"),
+                "lot_size": lot_sz,
+                "spot_price": spot_price or raw_res.get("spot_price"),
+                "futures_symbol": futures_symbol or f"{symbol} FUT",
+            }
+
         sig = _make_signal(
             strategy_id=STRATEGY_G_ID,
             strategy_name=STRATEGY_G_NAME,
@@ -981,8 +1008,8 @@ def evaluate_strategy_g(
                 "time_window_open": raw_res.get("time_window_open"),
             },
             spot_price=spot_price or raw_res.get("spot_price"),
-            futures_price=spot_price or raw_res.get("spot_price"),
-            atm_option=raw_res.get("suggested_option", {}).get("tradingsymbol"),
+            futures_price=futures_price or spot_price or raw_res.get("spot_price"),
+            atm_option=atm_dict,
             values={
                 "confidence": raw_res.get("confidence"),
                 "option_suggestion": raw_res.get("suggested_option"),

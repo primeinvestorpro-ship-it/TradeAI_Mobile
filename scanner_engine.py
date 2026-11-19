@@ -1083,12 +1083,23 @@ class ScannerEngine:
                 c5_spot[-1]["high"] = max(float(c5_spot[-1].get("high", spot_price)), spot_price)
                 c5_spot[-1]["low"] = min(float(c5_spot[-1].get("low", spot_price)), spot_price)
 
-            # Extract futures volume for real volume spike evaluation
+            # Extract futures volume and quotes for real volume spike evaluation & contract resolution
+            fut_symbol = None
+            fut_expiry = None
+            fut_price = spot_price
+            deriv_name = futures_engine.resolve_derivative_name(norm_sym)
             try:
-                deriv_name = futures_engine.resolve_derivative_name(norm_sym)
                 fut_instr = self.kite_client.get_nfo_futures_instrument(deriv_name)
                 if fut_instr:
                     fut_token = fut_instr["instrument_token"]
+                    fut_symbol = fut_instr.get("tradingsymbol")
+                    fut_expiry = str(fut_instr.get("expiry")) if fut_instr.get("expiry") else None
+                    fut_key = f"NFO:{fut_symbol}"
+                    q_fut = self.kite_client.get_quote([fut_key])
+                    fut_q = q_fut.get(fut_key, {})
+                    if fut_q.get("last_price"):
+                        fut_price = fut_q.get("last_price")
+
                     c5_fut = self.kite_client.get_intraday_history(fut_token, start_5m, now, interval="5minute") or []
                     if c5_fut:
                         for idx, c in enumerate(c5_spot):
@@ -1097,10 +1108,14 @@ class ScannerEngine:
             except Exception:
                 pass
 
+            candle_ts = c5_spot[-1].get("date") or datetime.datetime.now()
             res = scanner_strategy.evaluate_strategy_g(
                 candles_5m=c5_spot,
                 symbol=norm_sym,
                 spot_price=spot_price,
+                futures_symbol=fut_symbol,
+                expiry=fut_expiry,
+                candle_ts=candle_ts,
             )
             gti_data = res.get("gti_data", {})
             dashboard_entry = {
@@ -1154,6 +1169,14 @@ class ScannerEngine:
                 ts_str = candle_ts.strftime("%Y%m%d_%H%M") if hasattr(candle_ts, "strftime") else str(candle_ts)[:16]
                 key = f"G_{sig['direction']}_{norm_sym}_{ts_str}"
                 if key not in self._seen_keys:
+                    opt_type = "CE" if sig["direction"] == "BULLISH" else "PE"
+                    atm = resolve_atm_option(self.kite_client, norm_sym, opt_type, spot_price=spot_price, log=self.log)
+                    if atm:
+                        sig["atm_option"] = atm
+                        if not sig.get("expiry") and atm.get("expiry"):
+                            sig["expiry"] = atm["expiry"]
+                        if not sig.get("futures_symbol") and atm.get("futures_symbol"):
+                            sig["futures_symbol"] = atm["futures_symbol"]
                     self._emit_signal(sig, key)
         except Exception as exc:
             self.log(f"[scanner] Strategy G evaluation error ({norm_sym}): {exc!r}")
@@ -1387,12 +1410,23 @@ def evaluate_strategy_g_standalone(kite_client, spot_symbol="NIFTY"):
             c5_spot[-1]["high"] = max(float(c5_spot[-1].get("high", spot_price)), spot_price)
             c5_spot[-1]["low"] = min(float(c5_spot[-1].get("low", spot_price)), spot_price)
 
-        # Extract futures volume for real volume spike evaluation
+        # Extract futures volume and quotes for real volume spike evaluation & contract resolution
+        fut_symbol = None
+        fut_expiry = None
+        fut_price = spot_price
         try:
             deriv_name = futures_engine.resolve_derivative_name(norm_sym)
             fut_instr = kite_client.get_nfo_futures_instrument(deriv_name)
             if fut_instr:
                 fut_token = fut_instr["instrument_token"]
+                fut_symbol = fut_instr.get("tradingsymbol")
+                fut_expiry = str(fut_instr.get("expiry")) if fut_instr.get("expiry") else None
+                fut_key = f"NFO:{fut_symbol}"
+                q_fut = kite_client.get_quote([fut_key])
+                fut_q = q_fut.get(fut_key, {})
+                if fut_q.get("last_price"):
+                    fut_price = fut_q.get("last_price")
+
                 c5_fut = kite_client.get_intraday_history(fut_token, start_5m, now, interval="5minute") or []
                 if c5_fut:
                     for idx, c in enumerate(c5_spot):
@@ -1401,10 +1435,14 @@ def evaluate_strategy_g_standalone(kite_client, spot_symbol="NIFTY"):
         except Exception:
             pass
 
+        candle_ts = c5_spot[-1].get("date") or datetime.datetime.now()
         res = scanner_strategy.evaluate_strategy_g(
             candles_5m=c5_spot,
             symbol=norm_sym,
             spot_price=spot_price,
+            futures_symbol=fut_symbol,
+            expiry=fut_expiry,
+            candle_ts=candle_ts,
         )
         gti_data = res.get("gti_data", {})
         return {
