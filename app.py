@@ -41,6 +41,7 @@ import futures_engine
 import scanner_engine as scanner_mod
 import scanner_backtest
 import ai_orchestrator
+import position_guardian
 from kite_client import KiteClient, extract_request_token, load_cached_access_token, set_callback_result
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -88,7 +89,31 @@ STATE = {
     "last_option_chain":  None,
     "scanner":            None,   # ScannerEngine instance
     "scanner_running":    False,
+    "guardian":           None,   # PositionGuardian instance
 }
+
+
+def _ensure_guardian_started(client):
+    """Ensure the PositionGuardian is running for the logged-in Kite client."""
+    if client is None:
+        return None
+    with STATE_LOCK:
+        g = STATE.get("guardian")
+        if g is None:
+            g = position_guardian.PositionGuardian(
+                kite_client=client,
+                settings_loader=load_settings,
+                settings_saver=save_settings,
+                on_update=lambda st: socketio.emit("guardian_update", st),
+                on_alert=lambda al: socketio.emit("guardian_alert", al),
+                log=_make_log(),
+            )
+            STATE["guardian"] = g
+        else:
+            g.kite_client = client
+    if not g.is_running():
+        g.start()
+    return g
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +255,7 @@ def _exchange_and_set_token(token):
     with STATE_LOCK:
         STATE["kite_client"] = client
         STATE["logged_in"] = True
+    _ensure_guardian_started(client)
     set_callback_result(token=token, error=None)
     socketio.emit("login_status", {"status": "success", "source": "redirect", "user_name": client._user_name})
     log(f"[auth] successfully exchanged request_token and logged in! (user: {client._user_name})")
@@ -547,6 +573,7 @@ def login_manual():
         with STATE_LOCK:
             STATE["kite_client"] = client
             STATE["logged_in"] = True
+        _ensure_guardian_started(client)
         set_callback_result(token=request_token, error=None)
         socketio.emit("login_status", {"status": "success", "source": "manual", "user_name": client._user_name})
         log(f"[app] manual login successful for {client._user_name} (token {request_token[:8]}...)")
@@ -1230,13 +1257,111 @@ def scanner_order():
     # Order has succeeded! Ensure logging or WebSocket emit never crashes the response
     is_dry = bool(res.get("dry_run", False))
     order_id = res.get("order_id", "DRY_RUN_ORDER")
+    protection_summary = {}
+    try:
+        guardian = _ensure_guardian_started(kite_client)
+        if guardian:
+            guardian.register_order(
+                tradingsymbol=tradingsymbol,
+                exchange=exchange,
+                transaction_type=transaction_type,
+                quantity=quantity,
+                product=product,
+                dry_run=is_dry,
+            )
+            protection_summary = guardian.get_config()
+    except Exception as g_exc:
+        print(f"[scanner] Guardian register_order note: {g_exc!r}")
+
     try:
         log(f"[scanner] {'[DRY RUN] ' if is_dry else '[LIVE] '}Order executed: {transaction_type} {quantity} x {tradingsymbol} ({exchange}/{product}) -> ID: {order_id}")
         socketio.emit("scanner_order_placed", res)
     except Exception as log_exc:
         print(f"[scanner] Post-order notification note: {log_exc!r}")
 
-    return jsonify({"ok": True, "result": res})
+    return jsonify({"ok": True, "result": res, "protection": protection_summary})
+
+
+@app.route("/api/guardian/status", methods=["GET"])
+def guardian_status_route():
+    """Returns live Kite positions, combined MTM, Trailing SL, and risk guardian state."""
+    with STATE_LOCK:
+        logged_in = STATE.get("logged_in")
+        client = STATE.get("kite_client")
+        g = STATE.get("guardian")
+    if not logged_in or client is None:
+        return jsonify({"ok": False, "logged_in": False, "positions": [], "config": position_guardian.DEFAULT_GUARDIAN_CONFIG})
+    if g is None:
+        g = _ensure_guardian_started(client)
+    return jsonify({"ok": True, "logged_in": True, **g.get_state()})
+
+
+@app.route("/api/guardian/config", methods=["POST"])
+def guardian_config_route():
+    """Updates MTM Stop Loss, Trailing Stop Loss, and Per-Position SL rules."""
+    with STATE_LOCK:
+        client = STATE.get("kite_client")
+        g = STATE.get("guardian")
+    if g is None and client is not None:
+        g = _ensure_guardian_started(client)
+    incoming = request.get_json(force=True, silent=True) or {}
+    if g is not None:
+        state = g.update_config(incoming)
+        return jsonify({"ok": True, **state})
+    # Offline settings fallback
+    settings = load_settings()
+    for bool_k in ("mtm_sl_enabled", "trailing_sl_enabled", "per_pos_sl_enabled", "target_enabled"):
+        if bool_k in incoming:
+            settings[bool_k] = bool(incoming[bool_k])
+            if bool_k == "mtm_sl_enabled":
+                settings["sl_enabled"] = bool(incoming[bool_k])
+    for num_k in ("max_loss", "trailing_activation", "trailing_gap", "per_pos_sl_pct", "target_profit"):
+        if num_k in incoming:
+            try:
+                settings[num_k] = float(incoming[num_k])
+            except (TypeError, ValueError):
+                pass
+    save_settings(settings)
+    return jsonify({"ok": True, "config": settings})
+
+
+@app.route("/api/guardian/exit_position", methods=["POST"])
+def guardian_exit_position_route():
+    """Squares off a single open position immediately."""
+    with STATE_LOCK:
+        client = STATE.get("kite_client")
+        g = STATE.get("guardian")
+    if not client:
+        return jsonify({"ok": False, "error": "Please login first"}), 400
+    if g is None:
+        g = _ensure_guardian_started(client)
+    incoming = request.get_json(force=True, silent=True) or {}
+    key = incoming.get("key", "")
+    sym = incoming.get("tradingsymbol", "")
+    st = g.get_state()
+    target_pos = None
+    for p in st.get("positions", []):
+        if (key and p.get("key") == key) or (sym and p.get("tradingsymbol") == sym):
+            target_pos = p
+            break
+    if not target_pos:
+        return jsonify({"ok": False, "error": "Position not found or already closed"}), 404
+    res = g.square_off_position(target_pos, reason="USER_MANUAL_EXIT")
+    return jsonify(res)
+
+
+@app.route("/api/guardian/exit_all", methods=["POST"])
+def guardian_exit_all_route():
+    """Emergency square-off of ALL open Kite and simulated positions."""
+    with STATE_LOCK:
+        client = STATE.get("kite_client")
+        g = STATE.get("guardian")
+    if not client:
+        return jsonify({"ok": False, "error": "Please login first"}), 400
+    if g is None:
+        g = _ensure_guardian_started(client)
+    res = g.square_off_all(reason="USER_PANIC_SQUARE_OFF_ALL", trigger_type="MANUAL_EXIT_ALL")
+    return jsonify(res)
 
 
 @app.route("/api/scanner/backtest", methods=["GET", "POST"])
@@ -1315,6 +1440,7 @@ def _try_restore_session():
         with STATE_LOCK:
             STATE["kite_client"] = client
             STATE["logged_in"] = True
+        _ensure_guardian_started(client)
         print(f"[app] restored today's Kite session for {user_name} from token.json — no need to log in again")
     except Exception as exc:  # noqa: BLE001
         print(f"[app] cached session in token.json is invalid/expired ({exc!r}) — Login will be needed")

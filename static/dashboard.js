@@ -1900,14 +1900,19 @@ popBtnConfirmOrder.addEventListener('click', async () => {
       const r = data.result || {};
       const isDry = !!r.dry_run;
       const orderId = r.order_id || 'SIMULATED';
+      const prot = data.protection || {};
+      const protText = prot.mtm_sl_enabled
+        ? ` | 🛡️ Armed: MTM SL ₹-${prot.max_loss || 4000}${prot.trailing_sl_enabled ? ` + Trail @ ₹${prot.trailing_activation || 1500}` : ''}`
+        : '';
       if (popOrderFeedback) {
         popOrderFeedback.className = 'cond-pill cond-pass';
         popOrderFeedback.classList.remove('hidden');
-        popOrderFeedback.textContent = isDry
+        popOrderFeedback.textContent = (isDry
           ? `✓ [DRY RUN] Order simulated: BUY ${quantity} x ${atm.symbol}`
-          : `✓ LIVE Order Triggered! Order ID: ${orderId}`;
+          : `✓ LIVE Order Triggered! Order ID: ${orderId}`) + protText;
       }
-      addLog(`[scanner] ${isDry ? '[DRY RUN] ' : '⚡ [LIVE] '}Order executed for ${atm.symbol} (Qty: ${quantity}, ID: ${orderId})`, isDry ? 'info' : 'warn');
+      addLog(`[scanner] ${isDry ? '[DRY RUN] ' : '⚡ [LIVE] '}Order executed for ${atm.symbol} (Qty: ${quantity}, ID: ${orderId})${protText}`, isDry ? 'info' : 'warn');
+      if (typeof window.refreshGuardianStatus === 'function') window.refreshGuardianStatus();
 
       setTimeout(() => {
         popTradeConfirm.classList.add('hidden');
@@ -2942,3 +2947,178 @@ setTimeout(refreshGtiDashboard, 1200);
     }).catch(() => {});
   }
 })();
+
+// ── Live Kite Positions & MTM Risk Guardian ──────────────────────────────────
+function renderGuardianState(st) {
+  if (!st) return;
+  const cfg = st.config || {};
+  const positions = st.positions || [];
+
+  const mtmEl = $('guardianCurrentMtm');
+  if (mtmEl) {
+    const m = Number(st.current_mtm || 0);
+    mtmEl.textContent = `${m >= 0 ? '+' : ''}₹${m.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    mtmEl.style.color = m > 0 ? '#059669' : (m < 0 ? '#dc2626' : '#0f172a');
+  }
+
+  const peakEl = $('guardianPeakMtm');
+  if (peakEl) {
+    const pk = Number(st.peak_mtm || 0);
+    peakEl.textContent = `₹${pk.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  }
+
+  const slEl = $('guardianActiveSl');
+  if (slEl) {
+    if (st.trailing_active && st.trailing_sl_level != null) {
+      const tsl = Number(st.trailing_sl_level);
+      slEl.textContent = `TRAIL: ${tsl >= 0 ? '+' : ''}₹${tsl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      slEl.style.color = '#0284c7';
+    } else if (cfg.mtm_sl_enabled) {
+      slEl.textContent = `-₹${Number(cfg.max_loss || 4000).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      slEl.style.color = '#dc2626';
+    } else {
+      slEl.textContent = 'SL OFF';
+      slEl.style.color = '#64748b';
+    }
+  }
+
+  const badgeEl = $('guardianStatusBadge');
+  if (badgeEl) {
+    if (st.trailing_active) {
+      badgeEl.textContent = '🔒 TRAILING SL ACTIVE';
+      badgeEl.className = 'badge badge-info';
+    } else if (positions.length > 0) {
+      badgeEl.textContent = `🛡️ PROTECTING ${positions.length} POSITION${positions.length > 1 ? 'S' : ''}`;
+      badgeEl.className = 'badge badge-success';
+    } else if (st.running) {
+      badgeEl.textContent = '🛡️ ARMED & MONITORING';
+      badgeEl.className = 'badge badge-success';
+    } else {
+      badgeEl.textContent = 'PAUSED (LOGIN REQUIRED)';
+      badgeEl.className = 'badge badge-neutral';
+    }
+  }
+
+  const tbody = $('guardianPositionsTbody');
+  if (tbody) {
+    if (positions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:12px;">No open positions detected in Kite right now. Monitoring continuously...</td></tr>';
+    } else {
+      tbody.innerHTML = positions.map(p => {
+        const pnl = Number(p.pnl || 0);
+        const pct = Number(p.pnl_pct || 0);
+        const pnlColor = pnl >= 0 ? '#059669' : '#dc2626';
+        const sideBadge = p.side === 'LONG'
+          ? '<span class="badge badge-success" style="font-size:10px;">LONG</span>'
+          : '<span class="badge badge-danger" style="font-size:10px;">SHORT</span>';
+        const simTag = p.simulated ? ' <span class="badge badge-neutral" style="font-size:9px;">SIM</span>' : '';
+        const slTxt = p.sl_price != null ? `₹${Number(p.sl_price).toFixed(2)}` : '—';
+        const safeKey = encodeURIComponent(p.key || '');
+        const safeSym = encodeURIComponent(p.tradingsymbol || '');
+        return `<tr>
+          <td><strong>${p.tradingsymbol}</strong>${simTag}</td>
+          <td>${sideBadge}</td>
+          <td><strong>${p.quantity}</strong></td>
+          <td>₹${Number(p.average_price || 0).toFixed(2)}</td>
+          <td>₹${Number(p.last_price || 0).toFixed(2)}</td>
+          <td style="font-weight:800;color:${pnlColor};">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
+          <td style="font-weight:700;color:${pnlColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</td>
+          <td style="color:#dc2626;font-weight:700;">${slTxt}</td>
+          <td><button type="button" class="btn btn-danger btn-sm" onclick="guardianExitPosition('${safeKey}', '${safeSym}')" style="padding:2px 8px;font-size:11px;font-weight:700;">Exit</button></td>
+        </tr>`;
+      }).join('');
+    }
+  }
+
+  const evBox = $('guardianEventsBox');
+  if (evBox && st.events && st.events.length) {
+    evBox.innerHTML = st.events.slice(0, 4).map(ev =>
+      `<span style="background:#f8fafc;border:1px solid #e2e8f0;padding:2px 8px;border-radius:4px;"><strong>[${ev.time}]</strong> ${ev.message}</span>`
+    ).join('');
+  }
+}
+
+async function refreshGuardianStatus() {
+  try {
+    const res = await fetch('/api/guardian/status');
+    const d = await res.json();
+    if (d.ok) renderGuardianState(d);
+  } catch (e) {}
+}
+window.refreshGuardianStatus = refreshGuardianStatus;
+
+window.saveGuardianConfig = async function() {
+  const payload = {
+    mtm_sl_enabled: !!($('gdMtmSlEnabled') && $('gdMtmSlEnabled').checked),
+    max_loss: parseFloat($('gdMaxLoss') ? $('gdMaxLoss').value : 4000) || 4000,
+    trailing_sl_enabled: !!($('gdTrailEnabled') && $('gdTrailEnabled').checked),
+    trailing_activation: parseFloat($('gdTrailAct') ? $('gdTrailAct').value : 1500) || 1500,
+    trailing_gap: parseFloat($('gdTrailGap') ? $('gdTrailGap').value : 750) || 750,
+    per_pos_sl_enabled: !!($('gdPerPosEnabled') && $('gdPerPosEnabled').checked),
+    per_pos_sl_pct: parseFloat($('gdPerPosPct') ? $('gdPerPosPct').value : 25) || 25,
+    target_enabled: !!($('gdTargetEnabled') && $('gdTargetEnabled').checked),
+    target_profit: parseFloat($('gdTargetProfit') ? $('gdTargetProfit').value : 8000) || 8000,
+  };
+  try {
+    const res = await fetch('/api/guardian/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      renderGuardianState(d);
+      const msgEl = $('gdSaveMsg');
+      if (msgEl) {
+        msgEl.textContent = '✓ Risk rules armed!';
+        setTimeout(() => { msgEl.textContent = ''; }, 3000);
+      }
+      addLog(`[guardian] Risk rules updated: MTM SL ₹-${payload.max_loss}, Trail @ ₹${payload.trailing_activation} (gap ₹${payload.trailing_gap}), Pos SL ${payload.per_pos_sl_pct}%`, 'info');
+    }
+  } catch (e) {}
+};
+
+window.guardianExitPosition = async function(encKey, encSym) {
+  const key = decodeURIComponent(encKey || '');
+  const sym = decodeURIComponent(encSym || '');
+  try {
+    const res = await fetch('/api/guardian/exit_position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, tradingsymbol: sym }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      addLog(`[guardian] Manual exit executed for ${sym}`, 'warn');
+      refreshGuardianStatus();
+    } else {
+      addLog(`[guardian] Exit failed for ${sym}: ${d.error || 'Error'}`, 'error');
+    }
+  } catch (e) {}
+};
+
+window.guardianExitAll = async function() {
+  try {
+    const res = await fetch('/api/guardian/exit_all', { method: 'POST' });
+    const d = await res.json();
+    if (d.ok) {
+      addLog(`[guardian] 🚨 Emergency Square-Off All executed (${d.exited || 0} positions closed)`, 'warn');
+      refreshGuardianStatus();
+    }
+  } catch (e) {}
+};
+
+if (typeof socket !== 'undefined' && socket) {
+  socket.on('guardian_update', (st) => {
+    renderGuardianState(st);
+  });
+  socket.on('guardian_alert', (al) => {
+    if (al && al.reason) {
+      addLog(`🚨 [GUARDIAN ALERT] ${al.reason}`, 'warn');
+    }
+    refreshGuardianStatus();
+  });
+}
+
+setInterval(refreshGuardianStatus, 2500);
+setTimeout(refreshGuardianStatus, 800);
