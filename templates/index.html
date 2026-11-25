@@ -1060,7 +1060,10 @@
           <div class="popup-meta-grid">
             <div class="popup-meta-cell">
               <span class="popup-cell-label">SYMBOL</span>
-              <div class="popup-cell-val"><strong id="popSymbol">—</strong></div>
+              <div class="popup-cell-val" style="display:flex;align-items:center;gap:6px;">
+                <strong id="popSymbol">—</strong>
+                <a id="popSymbolChartLink" href="javascript:void(0)" onclick="openSignal5mChart(window._currentPopupSig ? window._currentPopupSig.id : null); return false;" style="font-size:10px;font-weight:700;color:#0284c7;background:#e0f2fe;border:1px solid #bae6fd;padding:2px 6px;border-radius:4px;text-decoration:none;display:inline-flex;align-items:center;gap:2px;" title="Open 5-Minute Candlestick Chart">📊 5m Chart ↗</a>
+              </div>
             </div>
             <div class="popup-meta-cell">
               <span class="popup-cell-label">SPOT PRICE</span>
@@ -1158,11 +1161,78 @@
 
       <div class="scanner-popup-actions">
         <button id="popBtnTrade" class="btn btn-primary btn-trade-main">🟢 BUY ATM CE</button>
+        <button id="popBtnChart" class="btn btn-info" onclick="openSignal5mChart(window._currentPopupSig ? window._currentPopupSig.id : null)" style="background:#0284c7;border-color:#0284c7;color:#fff;font-weight:700;display:inline-flex;align-items:center;gap:5px;">📊 5M CHART</button>
         <button id="popBtnDetails" class="btn btn-secondary">VIEW DETAILS</button>
         <button id="popBtnDismiss" class="btn btn-secondary">DISMISS</button>
       </div>
     </div>
   </div>
+    </div>
+  </div>
+
+  <!-- ─── 5-Minute Signal Candlestick Chart Modal ─── -->
+  <div id="signalChartModalOverlay" class="scanner-popup-overlay hidden" style="z-index: 2500; backdrop-filter: blur(8px);">
+    <div class="scanner-popup" style="max-width: 980px; width: 95vw; background: #0f172a; border: 1px solid #334155; border-radius: 14px; box-shadow: 0 25px 60px -15px rgba(0,0,0,0.7);">
+      <!-- Modal Header -->
+      <div class="scanner-popup-header" style="background: linear-gradient(87deg, #1e293b 0%, #0f172a 100%); border-bottom: 1px solid #334155; padding: 12px 18px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span style="font-size:22px;">📊</span>
+          <div>
+            <div style="display:flex; align-items:center; gap:8px;">
+              <strong id="scModalSymbol" style="font-size:16px; color:#f8fafc; letter-spacing:0.5px;">FINNIFTY</strong>
+              <span style="font-size:12px; color:#94a3b8; font-weight:600;">5-Min Candlestick Chart</span>
+              <span id="scModalBadge" class="badge badge-success" style="font-size:11px; font-weight:700;">▲ BUY CALL</span>
+            </div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:2px;">
+              Spot LTP: <strong id="scModalSpot" style="color:#f8fafc;">₹—</strong> &nbsp;|&nbsp;
+              Signal Time: <span id="scModalTime" style="color:#e2e8f0;">—</span> &nbsp;|&nbsp;
+              Contract: <strong id="scModalContract" style="color:#38bdf8;">—</strong>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <a id="scModalTvLink" href="#" target="_blank" rel="noopener" class="btn btn-sm btn-secondary" style="font-size:11px; color:#38bdf8; border-color:#0284c7; text-decoration:none; display:inline-flex; align-items:center; gap:4px; font-weight:600;" title="Open live 5m chart on TradingView">
+            📈 TradingView 5m ↗
+          </a>
+          <button type="button" class="btn btn-sm btn-secondary" onclick="focusDashboardChart()" style="font-size:11px; color:#cbd5e1;" title="Switch Overview Chart on dashboard to this symbol">
+            📌 Pin to Overview
+          </button>
+          <button type="button" class="scanner-popup-close" onclick="closeSignal5mChartModal()" style="font-size:16px; color:#94a3b8; background:transparent; border:none; cursor:pointer; padding:4px 8px;">✕</button>
+        </div>
+      </div>
+
+      <!-- Levels Banner -->
+      <div id="scModalLevelsBanner" style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; padding:8px 18px; background:#090d16; border-bottom:1px solid #1e293b; font-size:11px;">
+        <div style="display:flex; align-items:center; gap:16px; flex-wrap:wrap;">
+          <span style="color:#94a3b8;">Entry: <strong id="scModalEntry" style="color:#38bdf8;">₹—</strong></span>
+          <span style="color:#94a3b8;">Stop Loss: <strong id="scModalSl" style="color:#f43f5e;">₹—</strong></span>
+          <span style="color:#94a3b8;">Target 1 (1:1.5): <strong id="scModalTgt1" style="color:#10b981;">₹—</strong></span>
+          <span style="color:#94a3b8;">Target 2 (1:2): <strong id="scModalTgt2" style="color:#10b981;">₹—</strong></span>
+          <span style="color:#94a3b8;">Risk : Reward: <strong id="scModalRr" style="color:#fbbf24;">1:2.0</strong></span>
+        </div>
+        <div style="font-size:10px; color:#64748b;">
+          🔵 Blue Line = Entry &nbsp;|&nbsp; 🔴 Red Line = Stop Loss &nbsp;|&nbsp; 🟢 Green Line = Target
+        </div>
+      </div>
+
+      <!-- Chart Body -->
+      <div style="position:relative; width:100%; height:460px; background:#0f172a; padding:6px;">
+        <div id="signalChartCanvas" style="width:100%; height:100%;"></div>
+        <div id="scModalLoading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(15,23,42,0.8); color:#94a3b8; font-size:13px; font-weight:600;">
+          Loading 5-minute candles...
+        </div>
+      </div>
+
+      <!-- Modal Footer -->
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:10px 18px; background:#1e293b; border-top:1px solid #334155;">
+        <span style="font-size:11px; color:#94a3b8;">
+          💡 Interactive 5m candles · Scroll wheel to zoom, drag left/right to pan.
+        </span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="closeSignal5mChartModal()">Dismiss Chart</button>
+          <button type="button" class="btn btn-primary btn-sm" onclick="closeSignal5mChartModal(); if(window._currentPopupSig) { _showPopup(window._currentPopupSig); }" style="font-weight:700;">Back to Order ⚡</button>
+        </div>
+      </div>
     </div>
   </div>
 

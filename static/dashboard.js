@@ -932,8 +932,8 @@ function pollLtp() {
 }
 
 /* ── Chart backfill ──────────────────────────── */
-function loadSpotChart() {
-  const sym = (tickerInput.value || '').trim().toUpperCase() || 'RELIANCE';
+function loadSpotChart(symOverride) {
+  const sym = (symOverride || (tickerInput ? tickerInput.value : '') || '').trim().toUpperCase() || 'RELIANCE';
   $('chartTicker').textContent = sym;
   fetch(`/api/spot_chart?ticker=${encodeURIComponent(sym)}`).then(r => r.json()).then(d => {
     if (d.ok && candleSeries) {
@@ -1335,7 +1335,7 @@ function _renderSignalRow(sig) {
   const atmLabel = sig.atm_option
     ? `<span class="scanner-atm-tag">${sig.atm_option.option_type} ${sig.atm_option.strike} @ ₹${sig.atm_option.ltp ?? '—'}</span>`
     : '<span class="muted small">—</span>';
-  const viewBtn = `<button class="btn btn-secondary btn-sm" onclick="showPopupForSig('${sig.id}')">View</button>`;
+  const viewBtn = `<div style="display:inline-flex;align-items:center;gap:4px;"><button class="btn btn-secondary btn-sm" onclick="showPopupForSig('${sig.id}')">View</button><button class="btn btn-sm btn-info" onclick="openSignal5mChart('${sig.id}')" title="Open 5-Minute Chart" style="background:#0284c7;border-color:#0284c7;color:#fff;font-weight:700;padding:2px 8px;font-size:11px;">📊 5m</button></div>`;
 
   // 1. Reversal clearing: if this symbol has an active row with opposite direction, remove it!
   const rowsForSym = scannerSignalsTbody.querySelectorAll(`tr[data-symbol="${sig.symbol}"]`);
@@ -1954,6 +1954,214 @@ popupOverlay.addEventListener('click', e => {
     _nextPopup();
   }
 });
+
+// ── 5-Minute Signal Candlestick Chart Modal ───────────────────
+let signalModalChart = null;
+let signalCandleSeries = null;
+let signalPriceLines = [];
+let _activeSignalForChart = null;
+
+function closeSignal5mChartModal() {
+  const overlay = $('signalChartModalOverlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+window.closeSignal5mChartModal = closeSignal5mChartModal;
+
+function focusDashboardChart() {
+  closeSignal5mChartModal();
+  const sig = _activeSignalForChart || window._currentPopupSig;
+  if (!sig) return;
+  const sym = sig.symbol || '';
+  if (tickerInput) {
+    tickerInput.value = sym;
+  }
+  loadSpotChart(sym);
+  const chartEl = $('chart');
+  if (chartEl) {
+    chartEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+window.focusDashboardChart = focusDashboardChart;
+
+async function openSignal5mChart(sigIdOrObj) {
+  let sig = null;
+  if (!sigIdOrObj && window._currentPopupSig) {
+    sig = window._currentPopupSig;
+  } else if (typeof sigIdOrObj === 'object') {
+    sig = sigIdOrObj;
+  } else if (typeof sigIdOrObj === 'string') {
+    sig = _scannerSignals.find(s => s.id === sigIdOrObj) || (_currentPopupSig && _currentPopupSig.id === sigIdOrObj ? _currentPopupSig : null);
+  }
+  if (!sig && window._currentPopupSig) sig = window._currentPopupSig;
+  if (!sig) return;
+
+  _activeSignalForChart = sig;
+  const sym = (sig.symbol || 'NIFTY').toUpperCase();
+  const isBull = sig.direction === 'BULLISH' || (sig.signal && sig.signal.direction === 'BULLISH');
+  const spot = sig.spot_price != null ? Number(sig.spot_price).toFixed(2) : '—';
+  const timeStr = _fmtTime(sig.timestamp);
+  const atmSym = (sig.atm_option && (sig.atm_option.symbol || sig.atm_option.tradingsymbol)) || '—';
+
+  // Populate Header & Metas
+  const scModalSymbol = $('scModalSymbol');
+  if (scModalSymbol) scModalSymbol.textContent = sym;
+  const scModalSpot = $('scModalSpot');
+  if (scModalSpot) scModalSpot.textContent = `₹${spot}`;
+  const scModalTime = $('scModalTime');
+  if (scModalTime) scModalTime.textContent = timeStr;
+  const scModalContract = $('scModalContract');
+  if (scModalContract) scModalContract.textContent = atmSym;
+
+  const scModalBadge = $('scModalBadge');
+  if (scModalBadge) {
+    scModalBadge.textContent = isBull ? '▲ BUY CALL (BULLISH)' : '▼ BUY PUT (BEARISH)';
+    scModalBadge.className = 'badge ' + (isBull ? 'badge-success' : 'badge-danger');
+  }
+
+  // TradingView Link (NSE Indian Market format)
+  const scModalTvLink = $('scModalTvLink');
+  if (scModalTvLink) {
+    const tvSym = (sym === 'NIFTY') ? 'NIFTY' : (sym === 'BANKNIFTY' ? 'BANKNIFTY' : (sym === 'FINNIFTY' ? 'FINNIFTY' : sym));
+    scModalTvLink.href = `https://in.tradingview.com/chart/?symbol=NSE:${encodeURIComponent(tvSym)}`;
+  }
+
+  // Extract Entry, SL, Target
+  const v = sig.values || {};
+  const ep = sig.entry_price != null ? Number(sig.entry_price) : (sig.spot_price != null ? Number(sig.spot_price) : null);
+  const sl = v.structure_sl != null ? Number(v.structure_sl) : (sig.structure_stop_loss != null ? Number(sig.structure_stop_loss) : null);
+  const t1 = v.target1 != null ? Number(v.target1) : (sig.target1 != null ? Number(sig.target1) : null);
+  const t2 = v.target2 != null ? Number(v.target2) : (sig.target2 != null ? Number(sig.target2) : null);
+
+  const scModalEntry = $('scModalEntry');
+  if (scModalEntry) scModalEntry.textContent = ep ? `₹${ep.toFixed(2)}` : '—';
+  const scModalSl = $('scModalSl');
+  if (scModalSl) scModalSl.textContent = sl ? `₹${sl.toFixed(2)}` : '—';
+  const scModalTgt1 = $('scModalTgt1');
+  if (scModalTgt1) scModalTgt1.textContent = t1 ? `₹${t1.toFixed(2)}` : '—';
+  const scModalTgt2 = $('scModalTgt2');
+  if (scModalTgt2) scModalTgt2.textContent = t2 ? `₹${t2.toFixed(2)}` : '—';
+
+  // Show Modal Overlay
+  const overlay = $('signalChartModalOverlay');
+  if (overlay) overlay.classList.remove('hidden');
+
+  const loadingEl = $('scModalLoading');
+  if (loadingEl) loadingEl.style.display = 'flex';
+
+  // Initialize or resize LightweightChart
+  const container = $('signalChartCanvas');
+  if (!signalModalChart && container) {
+    signalModalChart = LightweightCharts.createChart(container, {
+      layout: { background: { color: '#0f172a' }, textColor: '#94a3b8' },
+      grid: { vertLines: { color: '#1e293b' }, horzLines: { color: '#1e293b' } },
+      timeScale: { timeVisible: true, secondsVisible: false },
+      rightPriceScale: { borderColor: '#334155' },
+    });
+    signalCandleSeries = signalModalChart.addCandlestickSeries({
+      upColor: '#10b981', downColor: '#f43f5e',
+      borderUpColor: '#10b981', borderDownColor: '#f43f5e',
+      wickUpColor: '#10b981', wickDownColor: '#f43f5e',
+    });
+    window.addEventListener('resize', () => {
+      if (signalModalChart && container) {
+        signalModalChart.applyOptions({ width: container.offsetWidth, height: container.offsetHeight });
+      }
+    });
+  }
+
+  // Adjust dimensions
+  if (signalModalChart && container) {
+    setTimeout(() => {
+      signalModalChart.applyOptions({ width: container.offsetWidth, height: container.offsetHeight });
+    }, 50);
+  }
+
+  // Clear previous price lines
+  if (signalCandleSeries && signalPriceLines.length) {
+    signalPriceLines.forEach(pl => {
+      try { signalCandleSeries.removePriceLine(pl); } catch (e) {}
+    });
+    signalPriceLines = [];
+  }
+
+  try {
+    const res = await fetch(`/api/spot_chart?ticker=${encodeURIComponent(sym)}`);
+    const d = await res.json();
+    if (d.ok && d.candles && d.candles.length && signalCandleSeries) {
+      signalCandleSeries.setData(d.candles);
+
+      // Add Price Lines
+      if (ep != null) {
+        const plEntry = signalCandleSeries.createPriceLine({
+          price: ep,
+          color: '#38bdf8',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'ENTRY',
+        });
+        signalPriceLines.push(plEntry);
+      }
+      if (sl != null) {
+        const plSl = signalCandleSeries.createPriceLine({
+          price: sl,
+          color: '#f43f5e',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: 'STOP LOSS',
+        });
+        signalPriceLines.push(plSl);
+      }
+      if (t2 != null) {
+        const plTgt = signalCandleSeries.createPriceLine({
+          price: t2,
+          color: '#10b981',
+          lineWidth: 2,
+          lineStyle: LightweightCharts.LineStyle.Solid,
+          axisLabelVisible: true,
+          title: 'TARGET 2 (1:2)',
+        });
+        signalPriceLines.push(plTgt);
+      }
+
+      // Add Signal Marker on nearest candle
+      const lastCandle = d.candles[d.candles.length - 1];
+      let markerTime = lastCandle.time;
+      if (sig.timestamp) {
+        const parsedT = Math.floor(new Date(sig.timestamp).getTime() / 1000);
+        if (!isNaN(parsedT)) {
+          let closest = d.candles[0];
+          let minDiff = Infinity;
+          for (const c of d.candles) {
+            const diff = Math.abs(c.time - parsedT);
+            if (diff < minDiff) { minDiff = diff; closest = c; }
+          }
+          if (closest) markerTime = closest.time;
+        }
+      }
+
+      signalCandleSeries.setMarkers([
+        {
+          time: markerTime,
+          position: isBull ? 'belowBar' : 'aboveBar',
+          color: isBull ? '#10b981' : '#f43f5e',
+          shape: isBull ? 'arrowUp' : 'arrowDown',
+          text: isBull ? '▲ CONFIRMED BUY' : '▼ CONFIRMED SELL',
+        }
+      ]);
+
+      if (signalModalChart) {
+        signalModalChart.timeScale().fitContent();
+      }
+    }
+  } catch (err) {
+    console.warn('[scanner] Failed to load 5m spot candles:', err);
+  } finally {
+    if (loadingEl) loadingEl.style.display = 'none';
+  }
+}
+window.openSignal5mChart = openSignal5mChart;
 
 // ── Restore scanner state on reload ───────────────────
 fetch('/api/scanner/status').then(r => r.json()).then(d => {
