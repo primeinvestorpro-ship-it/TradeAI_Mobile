@@ -26,9 +26,14 @@ def _make_signal(strategy_id, strategy_name, direction, symbol,
     """Build a standardised signal dict."""
     if not candle_ts or str(candle_ts).strip() in ("None", "null", ""):
         candle_ts = datetime.datetime.now()
+    elif isinstance(candle_ts, (int, float)):
+        # Handle Unix timestamp in seconds or milliseconds
+        ts_sec = candle_ts / 1000.0 if candle_ts > 1e12 else float(candle_ts)
+        candle_ts = datetime.datetime.fromtimestamp(ts_sec)
 
     id_ts_str = candle_ts.strftime('%Y%m%d_%H%M') if hasattr(candle_ts, 'strftime') else str(candle_ts)[:16]
-    iso_ts = candle_ts.isoformat() if hasattr(candle_ts, 'isoformat') else str(candle_ts)
+    candle_iso = candle_ts.isoformat() if hasattr(candle_ts, 'isoformat') else str(candle_ts)
+    now_iso = datetime.datetime.now().isoformat()
 
     return {
         "id": f"{strategy_id}_{symbol}_{id_ts_str}",
@@ -38,7 +43,8 @@ def _make_signal(strategy_id, strategy_name, direction, symbol,
         "symbol":         symbol,
         "futures_symbol": futures_symbol,
         "expiry":         str(expiry) if expiry else None,
-        "timestamp":      iso_ts,
+        "candle_time":    candle_iso,
+        "timestamp":      now_iso,
         "timeframe":      "5minute",
         "spot_price":     spot_price,
         "futures_price":  futures_price,

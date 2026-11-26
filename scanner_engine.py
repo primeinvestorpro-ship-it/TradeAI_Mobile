@@ -1225,6 +1225,11 @@ class ScannerEngine:
         opposite_dir = "BEARISH" if new_dir == "BULLISH" else "BULLISH"
         self._clear_reversed_signal(sym, old_direction=opposite_dir, new_direction=new_dir, strategy_id=strat_id)
 
+        # Stamp exact live emission time for popup & signal table display
+        if not signal.get("candle_time") and signal.get("timestamp"):
+            signal["candle_time"] = signal["timestamp"]
+        signal["timestamp"] = datetime.datetime.now().isoformat()
+
         with self._lock:
             self._seen_keys.add(key)
             self._signals.append(signal)

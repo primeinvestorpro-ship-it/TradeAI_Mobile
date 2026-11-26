@@ -1301,27 +1301,36 @@ socket.on('scanner_status', d => {
 
 // ── Signal table renderer ──────────────────────
 function _fmtTime(ts) {
+  const fmtOpts = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' };
   if (!ts || ts === 'None' || ts === 'null' || ts === 'undefined') {
-    return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return new Date().toLocaleTimeString('en-IN', fmtOpts);
   }
   try {
-    if (typeof ts === 'string') {
-      if (ts.length === 10 || ts.includes('00:00:00')) {
-        return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    let parsedInput = ts;
+    if (typeof ts === 'number') {
+      parsedInput = ts < 1e12 ? ts * 1000 : ts;
+    } else if (typeof ts === 'string') {
+      const trimmed = ts.trim();
+      if (/^\d{9,10}(\.\d+)?$/.test(trimmed)) {
+        parsedInput = Number(trimmed) * 1000;
+      } else if (/^\d{12,13}$/.test(trimmed)) {
+        parsedInput = Number(trimmed);
+      } else if (trimmed.length === 10 || trimmed.includes('00:00:00')) {
+        return new Date().toLocaleTimeString('en-IN', fmtOpts);
       }
     }
-    const d = new Date(ts);
+    const d = new Date(parsedInput);
     if (isNaN(d.getTime())) {
-      return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      return new Date().toLocaleTimeString('en-IN', fmtOpts);
     }
     // Guard against pure midnight timestamp (e.g. from daily candle date 00:00:00)
     if (d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0) {
-      return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      return new Date().toLocaleTimeString('en-IN', fmtOpts);
     }
-    return d.toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return d.toLocaleTimeString('en-IN', fmtOpts);
   }
   catch {
-    return new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    return new Date().toLocaleTimeString('en-IN', fmtOpts);
   }
 }
 
@@ -2133,8 +2142,15 @@ async function openSignal5mChart(sigIdOrObj) {
       // Add Signal Marker on nearest candle
       const lastCandle = d.candles[d.candles.length - 1];
       let markerTime = lastCandle.time;
-      if (sig.timestamp) {
-        const parsedT = Math.floor(new Date(sig.timestamp).getTime() / 1000);
+      const chartTsSrc = sig.candle_time || sig.timestamp;
+      if (chartTsSrc) {
+        let parsedMs = NaN;
+        if (typeof chartTsSrc === 'number') {
+          parsedMs = chartTsSrc < 1e12 ? chartTsSrc * 1000 : chartTsSrc;
+        } else {
+          parsedMs = new Date(chartTsSrc).getTime();
+        }
+        const parsedT = Math.floor(parsedMs / 1000);
         if (!isNaN(parsedT)) {
           let closest = d.candles[0];
           let minDiff = Infinity;
