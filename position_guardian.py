@@ -64,7 +64,9 @@ class PositionGuardian:
 
         # Live MTM & Trailing SL state
         self._positions: List[Dict[str, Any]] = []
+        self._closed_positions: List[Dict[str, Any]] = []
         self._sim_positions: Dict[str, Dict[str, Any]] = {}  # key: "EXCHANGE:SYMBOL:PRODUCT"
+        self._closed_sim_positions: List[Dict[str, Any]] = []
         self._peak_mtm: float = 0.0
         self._current_mtm: float = 0.0
         self._day_total_pnl: float = 0.0
@@ -260,6 +262,7 @@ class PositionGuardian:
     def poll_once(self) -> Dict[str, Any]:
         cfg = self.get_config()
         open_positions: List[Dict[str, Any]] = []
+        closed_positions: List[Dict[str, Any]] = []
         day_total_pnl = 0.0
 
         # 1. Fetch real Kite positions
@@ -268,12 +271,45 @@ class PositionGuardian:
             net_list = pos_resp.get("net", []) if isinstance(pos_resp, dict) else []
             for p in net_list:
                 qty = int(p.get("quantity") or 0)
-                day_total_pnl += float(p.get("pnl") or 0.0)
-                if qty == 0:
-                    continue
+                contract_pnl = float(p.get("pnl") or 0.0)
+                day_total_pnl += contract_pnl
                 sym = p.get("tradingsymbol", "")
                 exch = p.get("exchange", "NFO")
                 prod = p.get("product", "MIS")
+
+                if qty == 0:
+                    buy_qty = int(p.get("buy_quantity") or 0)
+                    sell_qty = int(p.get("sell_quantity") or 0)
+                    if buy_qty > 0 or sell_qty > 0 or contract_pnl != 0.0:
+                        buy_price = float(p.get("buy_price") or p.get("average_price") or 0.0)
+                        sell_price = float(p.get("sell_price") or p.get("last_price") or 0.0)
+                        traded_qty = max(buy_qty, sell_qty)
+                        was_long = buy_qty >= sell_qty
+                        entry_avg = buy_price if was_long else sell_price
+                        exit_avg = sell_price if was_long else buy_price
+                        entry_val = traded_qty * entry_avg
+                        pnl_pct = round((contract_pnl / entry_val) * 100.0, 2) if entry_val > 0 else 0.0
+                        closed_positions.append({
+                            "key": f"{exch}:{sym}:{prod}:CLOSED",
+                            "tradingsymbol": sym,
+                            "exchange": exch,
+                            "product": prod,
+                            "quantity": 0,
+                            "traded_qty": traded_qty,
+                            "side": "CLOSED",
+                            "prev_side": "LONG" if was_long else "SHORT",
+                            "average_price": round(entry_avg, 2),
+                            "exit_price": round(exit_avg, 2),
+                            "last_price": round(float(p.get("last_price") or exit_avg or 0.0), 2),
+                            "pnl": round(contract_pnl, 2),
+                            "total_contract_pnl": round(contract_pnl, 2),
+                            "pnl_pct": pnl_pct,
+                            "sl_price": None,
+                            "status": "CLOSED",
+                            "simulated": False,
+                        })
+                    continue
+
                 avg = float(p.get("average_price") or (p.get("buy_price") if qty > 0 else p.get("sell_price")) or 0.0)
                 ltp = float(p.get("last_price") or avg or 0.0)
                 open_mtm = round((ltp - avg) * qty, 2) if avg > 0 else float(p.get("unrealised") or p.get("pnl") or 0.0)
@@ -295,9 +331,10 @@ class PositionGuardian:
                     "average_price": round(avg, 2),
                     "last_price": round(ltp, 2),
                     "pnl": open_mtm,
-                    "total_contract_pnl": round(float(p.get("pnl") or open_mtm), 2),
+                    "total_contract_pnl": round(contract_pnl, 2),
                     "pnl_pct": pnl_pct,
                     "sl_price": sl_price,
+                    "status": "OPEN",
                     "simulated": False,
                 })
         except Exception as exc:
@@ -348,8 +385,9 @@ class PositionGuardian:
 
         with self._lock:
             self._positions = open_positions
+            self._closed_positions = closed_positions + list(self._closed_sim_positions)
             self._current_mtm = current_mtm
-            self._day_total_pnl = round(day_total_pnl, 2)
+            self._day_total_pnl = round(day_total_pnl + sum(float(cp.get("pnl") or 0.0) for cp in self._closed_sim_positions), 2)
             self._last_poll_ts = datetime.datetime.now().isoformat()
             self._last_error = None
 
@@ -448,7 +486,29 @@ class PositionGuardian:
             if pos.get("simulated"):
                 sim_key = f"{exch}:{sym}:{prod}"
                 with self._lock:
-                    self._sim_positions.pop(sim_key, None)
+                    popped = self._sim_positions.pop(sim_key, None)
+                    if popped is None:
+                        return {"ok": True, "message": f"{sym} simulated position already closed"}
+                    self._closed_sim_positions.insert(0, {
+                        "key": f"{sim_key}:CLOSED:{len(self._closed_sim_positions)}",
+                        "tradingsymbol": sym,
+                        "exchange": exch,
+                        "product": prod,
+                        "quantity": 0,
+                        "traded_qty": exit_qty,
+                        "side": "CLOSED",
+                        "prev_side": "LONG" if qty > 0 else "SHORT",
+                        "average_price": pos.get("average_price", 0.0),
+                        "exit_price": pos.get("last_price", 0.0),
+                        "last_price": pos.get("last_price", 0.0),
+                        "pnl": round(float(pos.get("pnl") or 0.0), 2),
+                        "total_contract_pnl": round(float(pos.get("pnl") or 0.0), 2),
+                        "pnl_pct": pos.get("pnl_pct", 0.0),
+                        "sl_price": None,
+                        "status": "CLOSED",
+                        "exit_reason": reason,
+                        "simulated": True,
+                    })
                 res = {"dry_run": True, "simulated_exit": True, "tradingsymbol": sym, "quantity": exit_qty, "side": exit_side}
             else:
                 # Real Kite exit — verify actual live qty right before order to avoid flipping
@@ -534,7 +594,9 @@ class PositionGuardian:
                 "running": self._running,
                 "config": cfg,
                 "positions": list(self._positions),
+                "closed_positions": list(self._closed_positions),
                 "open_count": len(self._positions),
+                "closed_count": len(self._closed_positions),
                 "current_mtm": self._current_mtm,
                 "day_total_pnl": self._day_total_pnl,
                 "peak_mtm": self._peak_mtm,

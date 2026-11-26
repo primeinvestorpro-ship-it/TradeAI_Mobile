@@ -176,6 +176,46 @@ def test_dry_run_interaction_panel_order_protection():
     client.kite.quotes = {"NFO:FINNIFTY26DEC28850CE": {"last_price": 150.0}}
     st2 = guardian.poll_once()
     assert st2["last_trigger"] is not None
-    # Simulated position should be closed
+    # Simulated position should be closed and appear in closed_positions
     st3 = guardian.poll_once()
     assert st3["open_count"] == 0
+    assert st3["closed_count"] == 1
+    assert st3["closed_positions"][0]["tradingsymbol"] == "FINNIFTY26DEC28850CE"
+    assert st3["closed_positions"][0]["status"] == "CLOSED"
+
+
+def test_closed_kite_positions_displayed():
+    client = MockKiteClient(dry_run=False)
+    settings = {
+        "dry_run": False,
+        "mtm_sl_enabled": True,
+        "max_loss": 2500.0,
+    }
+    client.kite.net_positions = [
+        {
+            "tradingsymbol": "INFY26DEC1140CE",
+            "exchange": "NFO",
+            "product": "NRML",
+            "quantity": 0,
+            "buy_quantity": 400,
+            "sell_quantity": 400,
+            "buy_price": 49.0,
+            "sell_price": 55.0,
+            "last_price": 56.0,
+            "pnl": 2400.0,
+        }
+    ]
+    guardian = PositionGuardian(kite_client=client, settings_loader=lambda: settings, log=lambda m: None)
+    st = guardian.poll_once()
+
+    assert st["open_count"] == 0
+    assert st["closed_count"] == 1
+    assert st["day_total_pnl"] == 2400.0
+    cp = st["closed_positions"][0]
+    assert cp["tradingsymbol"] == "INFY26DEC1140CE"
+    assert cp["status"] == "CLOSED"
+    assert cp["traded_qty"] == 400
+    assert cp["average_price"] == 49.0
+    assert cp["exit_price"] == 55.0
+    assert cp["pnl"] == 2400.0
+    assert len(client.kite.orders_placed) == 0

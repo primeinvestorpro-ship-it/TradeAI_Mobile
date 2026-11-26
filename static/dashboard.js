@@ -2953,12 +2953,20 @@ function renderGuardianState(st) {
   if (!st) return;
   const cfg = st.config || {};
   const positions = st.positions || [];
+  const closedPositions = st.closed_positions || [];
 
   const mtmEl = $('guardianCurrentMtm');
   if (mtmEl) {
     const m = Number(st.current_mtm || 0);
     mtmEl.textContent = `${m >= 0 ? '+' : ''}₹${m.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
     mtmEl.style.color = m > 0 ? '#059669' : (m < 0 ? '#dc2626' : '#0f172a');
+  }
+
+  const dayEl = $('guardianDayPnl');
+  if (dayEl) {
+    const dPnl = Number(st.day_total_pnl || 0);
+    dayEl.textContent = `${dPnl >= 0 ? '+' : ''}₹${dPnl.toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    dayEl.style.color = dPnl > 0 ? '#059669' : (dPnl < 0 ? '#dc2626' : '#0f172a');
   }
 
   const peakEl = $('guardianPeakMtm');
@@ -3001,10 +3009,10 @@ function renderGuardianState(st) {
 
   const tbody = $('guardianPositionsTbody');
   if (tbody) {
-    if (positions.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:12px;">No open positions detected in Kite right now. Monitoring continuously...</td></tr>';
+    if (positions.length === 0 && closedPositions.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="muted" style="text-align:center;padding:12px;">No open or closed positions detected in Kite today. Monitoring continuously...</td></tr>';
     } else {
-      tbody.innerHTML = positions.map(p => {
+      const openRows = positions.map(p => {
         const pnl = Number(p.pnl || 0);
         const pct = Number(p.pnl_pct || 0);
         const pnlColor = pnl >= 0 ? '#059669' : '#dc2626';
@@ -3026,7 +3034,31 @@ function renderGuardianState(st) {
           <td style="color:#dc2626;font-weight:700;">${slTxt}</td>
           <td><button type="button" class="btn btn-danger btn-sm" onclick="guardianExitPosition('${safeKey}', '${safeSym}')" style="padding:2px 8px;font-size:11px;font-weight:700;">Exit</button></td>
         </tr>`;
-      }).join('');
+      });
+
+      const closedRows = closedPositions.map(p => {
+        const pnl = Number(p.pnl || 0);
+        const pct = Number(p.pnl_pct || 0);
+        const pnlColor = pnl >= 0 ? '#059669' : '#dc2626';
+        const simTag = p.simulated ? ' <span class="badge badge-neutral" style="font-size:9px;">SIM</span>' : '';
+        const tradedTxt = p.traded_qty ? `0 (${p.traded_qty})` : '0';
+        const exitPriceTxt = p.exit_price != null && Number(p.exit_price) > 0
+          ? `₹${Number(p.exit_price).toFixed(2)}`
+          : `₹${Number(p.last_price || 0).toFixed(2)}`;
+        return `<tr style="opacity:0.78;background:#f8fafc;">
+          <td><strong>${p.tradingsymbol}</strong>${simTag}</td>
+          <td><span class="badge badge-neutral" style="font-size:10px;background:#e2e8f0;color:#475569;">CLOSED (${p.prev_side || 'FLAT'})</span></td>
+          <td>${tradedTxt}</td>
+          <td>₹${Number(p.average_price || 0).toFixed(2)}</td>
+          <td title="Exit / Last Price">${exitPriceTxt}</td>
+          <td style="font-weight:800;color:${pnlColor};">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
+          <td style="font-weight:700;color:${pnlColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</td>
+          <td class="muted">—</td>
+          <td><span class="badge badge-neutral" style="font-size:10px;color:#475569;">SQUARED OFF</span></td>
+        </tr>`;
+      });
+
+      tbody.innerHTML = openRows.concat(closedRows).join('');
     }
   }
 
