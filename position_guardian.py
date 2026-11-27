@@ -269,10 +269,22 @@ class PositionGuardian:
         closed_positions: List[Dict[str, Any]] = []
         day_total_pnl = 0.0
 
-        # 1. Fetch real Kite positions
+        # 1. Fetch real Kite positions + live quotes for real-time LTP
         try:
             pos_resp = self.kite_client.kite.positions()
             net_list = pos_resp.get("net", []) if isinstance(pos_resp, dict) else []
+            live_quotes: Dict[str, Any] = {}
+            quote_keys = list({
+                f"{p.get('exchange', 'NFO')}:{p.get('tradingsymbol', '')}"
+                for p in net_list
+                if p.get("tradingsymbol") and (int(p.get("quantity") or 0) != 0 or int(p.get("buy_quantity") or 0) > 0 or int(p.get("sell_quantity") or 0) > 0)
+            })
+            if quote_keys:
+                try:
+                    live_quotes = self.kite_client.get_quote(quote_keys) or {}
+                except Exception:
+                    live_quotes = {}
+
             for p in net_list:
                 qty = int(p.get("quantity") or 0)
                 contract_pnl = float(p.get("pnl") or 0.0)
@@ -280,6 +292,7 @@ class PositionGuardian:
                 sym = p.get("tradingsymbol", "")
                 exch = p.get("exchange", "NFO")
                 prod = p.get("product", "MIS")
+                live_q_ltp = live_quotes.get(f"{exch}:{sym}", {}).get("last_price")
 
                 if qty == 0:
                     buy_qty = int(p.get("buy_quantity") or 0)
@@ -293,6 +306,7 @@ class PositionGuardian:
                         exit_avg = sell_price if was_long else buy_price
                         entry_val = traded_qty * entry_avg
                         pnl_pct = round((contract_pnl / entry_val) * 100.0, 2) if entry_val > 0 else 0.0
+                        cur_ltp = float(live_q_ltp or p.get("last_price") or exit_avg or 0.0)
                         closed_positions.append({
                             "key": f"{exch}:{sym}:{prod}:CLOSED",
                             "tradingsymbol": sym,
@@ -304,7 +318,7 @@ class PositionGuardian:
                             "prev_side": "LONG" if was_long else "SHORT",
                             "average_price": round(entry_avg, 2),
                             "exit_price": round(exit_avg, 2),
-                            "last_price": round(float(p.get("last_price") or exit_avg or 0.0), 2),
+                            "last_price": round(cur_ltp, 2),
                             "pnl": round(contract_pnl, 2),
                             "total_contract_pnl": round(contract_pnl, 2),
                             "pnl_pct": pnl_pct,
@@ -315,7 +329,7 @@ class PositionGuardian:
                     continue
 
                 avg = float(p.get("average_price") or (p.get("buy_price") if qty > 0 else p.get("sell_price")) or 0.0)
-                ltp = float(p.get("last_price") or avg or 0.0)
+                ltp = float(live_q_ltp or p.get("last_price") or avg or 0.0)
                 open_mtm = round((ltp - avg) * qty, 2) if avg > 0 else float(p.get("unrealised") or p.get("pnl") or 0.0)
                 entry_val = abs(qty) * avg
                 pnl_pct = round((open_mtm / entry_val) * 100.0, 2) if entry_val > 0 else 0.0

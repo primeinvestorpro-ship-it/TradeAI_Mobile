@@ -525,11 +525,32 @@ def kite_callback():
     """
     return _handle_kite_redirect()
 
+def _launch_incognito_browser(url):
+    """Launch Chrome in --incognito (or Edge --inprivate) so a secondary Kite user can log in cleanly."""
+    import subprocess
+    candidates = [
+        (r"C:\Program Files\Google\Chrome\Application\chrome.exe", "--incognito"),
+        (r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", "--incognito"),
+        (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"), "--incognito"),
+        (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "--inprivate"),
+        (r"C:\Program Files\Microsoft\Edge\Application\msedge.exe", "--inprivate"),
+    ]
+    for exe, flag in candidates:
+        if exe and os.path.exists(exe):
+            try:
+                subprocess.Popen([exe, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except Exception:
+                pass
+    return False
+
+
 @app.route("/api/login", methods=["POST"])
 def login():
     incoming = request.get_json(force=True, silent=True) or {}
     acc_id = (incoming.get("account_id") or "primary").strip()
     force = incoming.get("force", False)
+    use_incognito = bool(incoming.get("incognito", acc_id != "primary"))
 
     with STATE_LOCK:
         if acc_id == "primary" and STATE["running"]:
@@ -571,11 +592,16 @@ def login():
     set_callback_result(token=None, error=None)
     socketio.emit("login_status", {"status": "waiting", "source": "redirect", "account_id": acc_id})
 
+    launched_incognito = False
+    if use_incognito:
+        launched_incognito = _launch_incognito_browser(login_url)
+
     return jsonify({
         "ok": True,
         "account_id": acc_id,
         "login_url": login_url,
-        "message": f"Redirecting to Kite for [{acc_id}] authentication..."
+        "launched_incognito": launched_incognito,
+        "message": f"Opened Incognito Kite login for [{acc_id}]..." if launched_incognito else f"Redirecting to Kite for [{acc_id}] authentication..."
     })
 
 

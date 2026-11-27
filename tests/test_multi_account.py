@@ -33,7 +33,15 @@ class _MockClient:
         return {"dry_run": self.settings["dry_run"], "order_id": f"ORD_{self._user_name}", "tradingsymbol": tradingsymbol, "quantity": quantity}
 
     def get_quote(self, keys):
-        return {k: {"last_price": 150.0} for k in keys}
+        out = {}
+        for k in keys:
+            sym = k.split(":", 1)[-1]
+            p = next((x for x in self.kite._positions if x["tradingsymbol"] == sym), None)
+            out[k] = {"last_price": p["last_price"] if p else 150.0}
+        return out
+
+    def get_actual_position_qty(self, tradingsymbol, exchange="NFO", product="MIS", expected_qty=None):
+        return expected_qty or 0
 
 
 def test_per_account_token_file_paths():

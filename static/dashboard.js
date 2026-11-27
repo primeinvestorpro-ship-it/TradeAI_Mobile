@@ -895,7 +895,7 @@ aiProviderSelect.dispatchEvent(new Event('change'));
 /* ── LTP poller ──────────────────────────────── */
 function startLtpPoller() {
   if (ltpPollerId) return;
-  ltpPollerId = setInterval(pollLtp, 3000);
+  ltpPollerId = setInterval(pollLtp, 1500);
   pollLtp();
 }
 function stopLtpPoller() {
@@ -3112,15 +3112,16 @@ function renderGuardianState(st) {
         const simTag = p.simulated ? ' <span class="badge badge-neutral" style="font-size:9px;">SIM</span>' : '';
         const accTag = p.account_label ? ` <span class="badge badge-info" style="font-size:9px;">${p.account_label}</span>` : '';
         const tradedTxt = p.traded_qty ? `0 (${p.traded_qty})` : '0';
-        const exitPriceTxt = p.exit_price != null && Number(p.exit_price) > 0
-          ? `₹${Number(p.exit_price).toFixed(2)}`
-          : `₹${Number(p.last_price || 0).toFixed(2)}`;
-        return `<tr style="opacity:0.78;background:#f8fafc;">
+        const liveLtpTxt = `₹${Number(p.last_price || 0).toFixed(2)}`;
+        const exitSub = p.exit_price != null && Number(p.exit_price) > 0
+          ? `<div style="font-size:10px;color:#64748b;">Exit: ₹${Number(p.exit_price).toFixed(2)}</div>`
+          : '';
+        return `<tr style="opacity:0.85;background:#f8fafc;">
           <td><strong>${p.tradingsymbol}</strong>${accTag}${simTag}</td>
           <td><span class="badge badge-neutral" style="font-size:10px;background:#e2e8f0;color:#475569;">CLOSED (${p.prev_side || 'FLAT'})</span></td>
           <td>${tradedTxt}</td>
           <td>₹${Number(p.average_price || 0).toFixed(2)}</td>
-          <td title="Exit / Last Price">${exitPriceTxt}</td>
+          <td><strong>${liveLtpTxt}</strong>${exitSub}</td>
           <td style="font-weight:800;color:${pnlColor};">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
           <td style="font-weight:700;color:${pnlColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</td>
           <td class="muted">—</td>
@@ -3313,12 +3314,16 @@ window.loginKiteAccount = async function(accId) {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_id: accId, force: true }),
+      body: JSON.stringify({ account_id: accId, force: true, incognito: accId !== 'primary' }),
     });
     const d = await res.json();
     if (d.ok && d.login_url) {
-      window.open(d.login_url, '_blank');
-      addLog(`[auth] Opened Kite login for [${accId}]. Tip: if Chrome is already logged into another Zerodha user, open in Incognito or paste the redirect URL via "Token".`, 'info');
+      if (d.launched_incognito) {
+        addLog(`[auth] Opened Chrome Incognito Kite login for [${accId}]. Complete login in the Incognito window!`, 'info');
+      } else {
+        window.open(d.login_url, '_blank');
+        addLog(`[auth] Opened Kite login for [${accId}]. If already logged into another Zerodha user, open Incognito and paste redirect URL via "Token".`, 'info');
+      }
     } else {
       window.alert(`Login error for ${accId}: ${d.error || 'Unknown error'}`);
       addLog(`[auth] Login error for [${accId}]: ${d.error || 'Unknown error'}`, 'error');
