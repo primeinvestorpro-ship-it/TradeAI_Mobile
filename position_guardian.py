@@ -601,18 +601,26 @@ class PositionGuardian:
                 res = {"dry_run": True, "simulated_exit": True, "tradingsymbol": sym, "quantity": exit_qty, "side": exit_side}
             else:
                 # Real Kite exit — verify actual live qty right before order to avoid flipping
-                actual_qty = self.kite_client.get_actual_position_qty(sym, exchange=exch, product=prod, expected_qty=qty)
+                try:
+                    actual_qty = self.kite_client.get_actual_position_qty(sym, exchange=exch, product=prod, expected_qty=qty)
+                except Exception as exc_pos:
+                    self.log(f"[guardian] ⚠️ get_actual_position_qty failed for {sym}: {exc_pos!r} — using expected qty {qty}")
+                    actual_qty = qty
                 if actual_qty == 0:
                     return {"ok": True, "message": f"{sym} already flat in Kite"}
                 real_side = "SELL" if actual_qty > 0 else "BUY"
                 real_qty = abs(int(actual_qty))
-                res = self.kite_client.place_market_order(
-                    tradingsymbol=sym,
-                    exchange=exch,
-                    transaction_type=real_side,
-                    quantity=real_qty,
-                    product=prod,
-                )
+                try:
+                    res = self.kite_client.place_market_order(
+                        tradingsymbol=sym,
+                        exchange=exch,
+                        transaction_type=real_side,
+                        quantity=real_qty,
+                        product=prod,
+                    )
+                except Exception as exc_ord:
+                    self.log(f"[guardian] ⚠️ place_market_order failed for {sym}: {exc_ord!r}")
+                    raise RuntimeError(f"Order placement failed for {sym}: {exc_ord}") from exc_ord
 
             self.log(f"[guardian] 🚨 EXITED {sym} ({exit_side} {exit_qty}) | Reason: {reason}")
             self._record_event("POSITION_EXITED", f"{sym} exited ({exit_side} {exit_qty}) — {reason}")

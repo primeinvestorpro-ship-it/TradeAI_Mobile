@@ -1713,8 +1713,14 @@ def guardian_exit_position_route():
             break
     if not target_pos:
         return jsonify({"ok": False, "error": "Position not found or already closed"}), 404
-    res = g.square_off_position(target_pos, reason="USER_MANUAL_EXIT")
-    return jsonify(res)
+    try:
+        res = g.square_off_position(target_pos, reason="USER_MANUAL_EXIT")
+        return jsonify(res)
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[app] exit_position error for [{acc_id}]: {exc!r}\n{tb}")
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/guardian/exit_all", methods=["POST"])
@@ -1740,8 +1746,14 @@ def guardian_exit_all_route():
     client, g = _get_guardian_for_account(acc_id)
     if not client or not g:
         return jsonify({"ok": False, "error": "Please login first"}), 400
-    res = g.square_off_all(reason="USER_PANIC_SQUARE_OFF_ALL", trigger_type="MANUAL_EXIT_ALL")
-    return jsonify(res)
+    try:
+        res = g.square_off_all(reason="USER_PANIC_SQUARE_OFF_ALL", trigger_type="MANUAL_EXIT_ALL")
+        return jsonify(res)
+    except Exception as exc:  # noqa: BLE001
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[app] exit_all error for [{acc_id}]: {exc!r}\n{tb}")
+        return jsonify({"ok": False, "error": str(exc)}), 500
 
 
 @app.route("/api/scanner/backtest", methods=["GET", "POST"])
