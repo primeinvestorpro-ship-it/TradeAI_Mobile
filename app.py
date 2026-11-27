@@ -37,11 +37,14 @@ if hasattr(sys.stdout, "reconfigure"):
 from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_socketio import SocketIO
 
+from concurrent.futures import ThreadPoolExecutor
+
 import futures_engine
 import scanner_engine as scanner_mod
 import scanner_backtest
 import ai_orchestrator
 import position_guardian
+import account_manager
 from kite_client import KiteClient, extract_request_token, load_cached_access_token, set_callback_result
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -80,37 +83,56 @@ socketio = SocketIO(app, async_mode="threading")
 
 STATE_LOCK = threading.Lock()
 STATE = {
-    "kite_client":        None,
-    "logged_in":          False,
-    "running":            False,
-    "stop_event":         None,
-    "last_analysis":      None,   # last full analysis result dict
-    "last_universe_event": None,
-    "last_option_chain":  None,
-    "scanner":            None,   # ScannerEngine instance
-    "scanner_running":    False,
-    "guardian":           None,   # PositionGuardian instance
+    "kite_client":              None,
+    "logged_in":                False,
+    "running":                  False,
+    "stop_event":               None,
+    "last_analysis":            None,   # last full analysis result dict
+    "last_universe_event":      None,
+    "last_option_chain":        None,
+    "scanner":                  None,   # ScannerEngine instance
+    "scanner_running":          False,
+    "guardian":                 None,   # Primary PositionGuardian instance
+    "accounts":                 {},     # account_id -> {client, logged_in, user_name, guardian}
+    "pending_login_account_id": "primary",
 }
 
 
-def _ensure_guardian_started(client):
-    """Ensure the PositionGuardian is running for the logged-in Kite client."""
+def _ensure_guardian_started(client, account_id="primary"):
+    """Ensure the PositionGuardian is running for the given logged-in Kite client."""
     if client is None:
         return None
+    acc_id = account_id or "primary"
+    acc_loader = account_manager.make_account_settings_loader(acc_id, load_settings)
+    acc_saver = account_manager.make_account_settings_saver(acc_id, load_settings, save_settings)
+
     with STATE_LOCK:
-        g = STATE.get("guardian")
+        acc_entry = STATE["accounts"].setdefault(acc_id, {
+            "client": client,
+            "logged_in": True,
+            "user_name": getattr(client, "_user_name", "Kite User"),
+            "guardian": None,
+        })
+        acc_entry["client"] = client
+        acc_entry["logged_in"] = True
+        acc_entry["user_name"] = getattr(client, "_user_name", acc_entry.get("user_name", "Kite User"))
+
+        g = acc_entry.get("guardian")
         if g is None:
             g = position_guardian.PositionGuardian(
                 kite_client=client,
-                settings_loader=load_settings,
-                settings_saver=save_settings,
-                on_update=lambda st: socketio.emit("guardian_update", st),
-                on_alert=lambda al: socketio.emit("guardian_alert", al),
+                settings_loader=acc_loader,
+                settings_saver=acc_saver,
+                on_update=lambda st, aid=acc_id: socketio.emit("guardian_update", {**st, "account_id": aid}),
+                on_alert=lambda al, aid=acc_id: socketio.emit("guardian_alert", {**al, "account_id": aid}),
                 log=_make_log(),
             )
-            STATE["guardian"] = g
+            acc_entry["guardian"] = g
         else:
             g.kite_client = client
+
+        if acc_id == "primary":
+            STATE["guardian"] = g
     if not g.is_running():
         g.start()
     return g
@@ -242,10 +264,12 @@ def _spawn_engine_thread(runnable, log):
 # Routes — pages
 # ---------------------------------------------------------------------------
 
-def _exchange_and_set_token(token):
-    settings = load_settings()
+def _exchange_and_set_token(token, account_id=None):
+    with STATE_LOCK:
+        acc_id = account_id or STATE.get("pending_login_account_id") or "primary"
+    acc_settings = account_manager.make_account_settings_loader(acc_id, load_settings)()
     log = _make_log()
-    client = KiteClient(settings, log=log)
+    client = KiteClient(acc_settings, log=log, account_id=acc_id)
     client.complete_login(token)
     try:
         prof = client.kite.profile()
@@ -253,12 +277,14 @@ def _exchange_and_set_token(token):
     except Exception:
         client._user_name = "Kite User"
     with STATE_LOCK:
-        STATE["kite_client"] = client
-        STATE["logged_in"] = True
-    _ensure_guardian_started(client)
+        if acc_id == "primary":
+            STATE["kite_client"] = client
+            STATE["logged_in"] = True
+        STATE["pending_login_account_id"] = "primary"
+    _ensure_guardian_started(client, account_id=acc_id)
     set_callback_result(token=token, error=None)
-    socketio.emit("login_status", {"status": "success", "source": "redirect", "user_name": client._user_name})
-    log(f"[auth] successfully exchanged request_token and logged in! (user: {client._user_name})")
+    socketio.emit("login_status", {"status": "success", "source": "redirect", "account_id": acc_id, "user_name": client._user_name})
+    log(f"[auth] successfully exchanged request_token for [{acc_id}]! (user: {client._user_name})")
     return client
 
 
@@ -501,24 +527,28 @@ def kite_callback():
 
 @app.route("/api/login", methods=["POST"])
 def login():
-    with STATE_LOCK:
-        if STATE["running"]:
-            return jsonify({"ok": False, "error": "engine is running — stop it first"}), 400
-
-    settings = load_settings()
-    if not settings.get("kite_api_key") or not settings.get("kite_api_secret"):
-        return jsonify({"ok": False, "error": "Kite API key/secret not set — save Settings first"}), 400
-
     incoming = request.get_json(force=True, silent=True) or {}
+    acc_id = (incoming.get("account_id") or "primary").strip()
     force = incoming.get("force", False)
 
+    with STATE_LOCK:
+        if acc_id == "primary" and STATE["running"]:
+            return jsonify({"ok": False, "error": "engine is running — stop it first"}), 400
+        STATE["pending_login_account_id"] = acc_id
+
+    acc_settings = account_manager.make_account_settings_loader(acc_id, load_settings)()
+    if not acc_settings.get("kite_api_key") or not acc_settings.get("kite_api_secret"):
+        return jsonify({"ok": False, "error": f"Kite API key/secret not set for {acc_id}"}), 400
+
     log = _make_log()
-    client_pre = KiteClient(settings, log=log)
+    client_pre = KiteClient(acc_settings, log=log, account_id=acc_id)
     login_url = client_pre.kite.login_url()
 
     with STATE_LOCK:
-        client = STATE.get("kite_client")
-        if not force and client and STATE.get("logged_in"):
+        acc_entry = STATE["accounts"].get(acc_id, {})
+        client = acc_entry.get("client") or (STATE.get("kite_client") if acc_id == "primary" else None)
+        is_logged = acc_entry.get("logged_in") or (STATE.get("logged_in") if acc_id == "primary" else False)
+        if not force and client and is_logged:
             try:
                 prof = client.kite.profile()
                 user_name = prof.get("user_name") or prof.get("user_id") or "Kite User"
@@ -526,35 +556,42 @@ def login():
                 return jsonify({
                     "ok": True,
                     "already_logged_in": True,
+                    "account_id": acc_id,
                     "login_url": login_url,
                     "user_name": user_name,
-                    "message": f"Already connected to Kite as {user_name}"
+                    "message": f"Already connected to Kite [{acc_id}] as {user_name}"
                 })
             except Exception:
-                STATE["logged_in"] = False
-                STATE["kite_client"] = None
+                if acc_id == "primary":
+                    STATE["logged_in"] = False
+                    STATE["kite_client"] = None
+                if acc_id in STATE["accounts"]:
+                    STATE["accounts"][acc_id]["logged_in"] = False
 
     set_callback_result(token=None, error=None)
-    socketio.emit("login_status", {"status": "waiting", "source": "redirect"})
+    socketio.emit("login_status", {"status": "waiting", "source": "redirect", "account_id": acc_id})
 
     return jsonify({
         "ok": True,
+        "account_id": acc_id,
         "login_url": login_url,
-        "message": "Redirecting to Kite for authentication..."
+        "message": f"Redirecting to Kite for [{acc_id}] authentication..."
     })
 
 
 @app.route("/api/login/manual", methods=["POST"])
 def login_manual():
+    incoming = request.get_json(force=True, silent=True) or {}
+    acc_id = (incoming.get("account_id") or "primary").strip()
+
     with STATE_LOCK:
-        if STATE["running"]:
+        if acc_id == "primary" and STATE["running"]:
             return jsonify({"ok": False, "error": "engine is running — stop it first"}), 400
 
-    settings = load_settings()
-    if not settings.get("kite_api_key") or not settings.get("kite_api_secret"):
-        return jsonify({"ok": False, "error": "Kite API key/secret not set — save Settings first"}), 400
+    acc_settings = account_manager.make_account_settings_loader(acc_id, load_settings)()
+    if not acc_settings.get("kite_api_key") or not acc_settings.get("kite_api_secret"):
+        return jsonify({"ok": False, "error": f"Kite API key/secret not set for {acc_id}"}), 400
 
-    incoming = request.get_json(force=True, silent=True) or {}
     raw_input = str(incoming.get("token_input", ""))
     try:
         request_token = extract_request_token(raw_input)
@@ -563,7 +600,7 @@ def login_manual():
 
     log = _make_log()
     try:
-        client = KiteClient(settings, log=log)
+        client = KiteClient(acc_settings, log=log, account_id=acc_id)
         client.complete_login(request_token)
         try:
             prof = client.kite.profile()
@@ -571,16 +608,17 @@ def login_manual():
         except Exception:
             client._user_name = "Kite User"
         with STATE_LOCK:
-            STATE["kite_client"] = client
-            STATE["logged_in"] = True
-        _ensure_guardian_started(client)
+            if acc_id == "primary":
+                STATE["kite_client"] = client
+                STATE["logged_in"] = True
+        _ensure_guardian_started(client, account_id=acc_id)
         set_callback_result(token=request_token, error=None)
-        socketio.emit("login_status", {"status": "success", "source": "manual", "user_name": client._user_name})
-        log(f"[app] manual login successful for {client._user_name} (token {request_token[:8]}...)")
-        return jsonify({"ok": True, "message": f"Connected to Kite as {client._user_name}!"})
+        socketio.emit("login_status", {"status": "success", "source": "manual", "account_id": acc_id, "user_name": client._user_name})
+        log(f"[app] manual login successful for [{acc_id}] {client._user_name} (token {request_token[:8]}...)")
+        return jsonify({"ok": True, "account_id": acc_id, "user_name": client._user_name, "message": f"Connected [{acc_id}] as {client._user_name}!"})
     except Exception as exc:  # noqa: BLE001
-        log(f"[app] manual login failed: {exc!r}")
-        socketio.emit("login_status", {"status": "error", "message": str(exc), "source": "manual"})
+        log(f"[app] manual login failed for [{acc_id}]: {exc!r}")
+        socketio.emit("login_status", {"status": "error", "message": str(exc), "source": "manual", "account_id": acc_id})
         return jsonify({"ok": False, "error": str(exc)}), 400
 
 
@@ -1216,126 +1254,314 @@ def scanner_resolve_atm():
         return jsonify({"ok": False, "error": str(exc), "traceback": traceback.format_exc()}), 500
 
 
+@app.route("/api/accounts", methods=["GET", "POST"])
+def accounts_route():
+    """List all configured Kite accounts with live session & MTM summary, or add/update an account."""
+    if request.method == "POST":
+        incoming = request.get_json(force=True, silent=True) or {}
+        if not incoming.get("id") and (not incoming.get("api_key") or not incoming.get("api_secret")):
+            return jsonify({"ok": False, "error": "api_key and api_secret are required for a new Kite account"}), 400
+        acc = account_manager.add_or_update_account(incoming, load_settings, save_settings)
+        masked = {k: v for k, v in acc.items() if k != "api_secret"}
+        masked["has_secret"] = bool(acc.get("api_secret"))
+        return jsonify({"ok": True, "account": masked})
+
+    accounts = account_manager.load_accounts(load_settings)
+    out = []
+    with STATE_LOCK:
+        acc_map = dict(STATE.get("accounts", {}))
+        primary_client = STATE.get("kite_client")
+        primary_logged = STATE.get("logged_in", False)
+
+    for acc in accounts:
+        aid = acc.get("id", "primary")
+        rt = acc_map.get(aid, {})
+        is_logged = bool(rt.get("logged_in")) or (aid == "primary" and primary_logged and primary_client is not None)
+        user_name = rt.get("user_name") or (getattr(primary_client, "_user_name", None) if aid == "primary" else None) or acc.get("label")
+        g = rt.get("guardian") or (STATE.get("guardian") if aid == "primary" else None)
+        g_state = g.get_state() if g is not None else {}
+        out.append({
+            "id": aid,
+            "label": acc.get("label", aid),
+            "api_key": acc.get("api_key", ""),
+            "has_secret": bool(acc.get("api_secret")),
+            "lot_multiplier": int(acc.get("lot_multiplier", 1)),
+            "dry_run": bool(acc.get("dry_run", True)),
+            "enabled": bool(acc.get("enabled", True)),
+            "logged_in": is_logged,
+            "user_name": user_name if is_logged else None,
+            "current_mtm": g_state.get("current_mtm", 0.0),
+            "day_total_pnl": g_state.get("day_total_pnl", 0.0),
+            "open_count": g_state.get("open_count", 0),
+            "closed_count": g_state.get("closed_count", 0),
+            "max_loss": acc.get("max_loss", 2500.0),
+            "trailing_activation": acc.get("trailing_activation", 1500.0),
+            "trailing_gap": acc.get("trailing_gap", 750.0),
+            "per_pos_sl_pct": acc.get("per_pos_sl_pct", 25.0),
+        })
+    return jsonify({"ok": True, "accounts": out})
+
+
+@app.route("/api/accounts/<account_id>", methods=["DELETE"])
+def delete_account_route(account_id):
+    """Remove a secondary Kite account and stop its guardian."""
+    if account_id == "primary":
+        return jsonify({"ok": False, "error": "Cannot delete primary account"}), 400
+    with STATE_LOCK:
+        rt = STATE["accounts"].pop(account_id, None)
+    if rt and rt.get("guardian"):
+        try:
+            rt["guardian"].stop()
+        except Exception:
+            pass
+    deleted = account_manager.delete_account(account_id, load_settings)
+    if not deleted:
+        return jsonify({"ok": False, "error": "Account not found"}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/api/scanner/order", methods=["POST"])
 def scanner_order():
-    """Trigger an order directly via Kite client (respects dry_run setting)."""
-    with STATE_LOCK:
-        if not STATE["logged_in"] or STATE["kite_client"] is None:
-            return jsonify({"ok": False, "error": "Please login first"}), 400
-        kite_client = STATE["kite_client"]
-        settings = load_settings()
-        kite_client.settings["dry_run"] = settings.get("dry_run", True)
-
+    """
+    Trigger an order on one or multiple logged-in Kite accounts concurrently.
+    Supports `account_ids: ["primary", "acc_2"]` (or `"ALL"`), `account_quantities: {id: qty}`,
+    and `use_multiplier: true`. Defaults to `["primary"]` for backward compatibility.
+    """
     incoming = request.get_json(force=True, silent=True) or {}
     tradingsymbol = incoming.get("tradingsymbol", "").strip()
     exchange = incoming.get("exchange", "NFO").strip().upper()
     transaction_type = incoming.get("transaction_type", "BUY").strip().upper()
+    settings = load_settings()
     product = (incoming.get("product") or settings.get("default_product", "MIS")).strip().upper()
     try:
-        quantity = int(incoming.get("quantity", 0))
+        base_quantity = int(incoming.get("quantity", 0))
     except (ValueError, TypeError):
-        quantity = 0
+        base_quantity = 0
 
     if not tradingsymbol:
         return jsonify({"ok": False, "error": "tradingsymbol is required"}), 400
-    if quantity <= 0:
+    if base_quantity <= 0:
         return jsonify({"ok": False, "error": "valid positive quantity is required"}), 400
 
-    log = _make_log()
-    try:
-        res = kite_client.place_market_order(
-            tradingsymbol=tradingsymbol,
-            exchange=exchange,
-            transaction_type=transaction_type,
-            quantity=quantity,
-            product=product,
-        )
-    except Exception as exc:  # noqa: BLE001
-        log(f"[scanner] Order placement failed for {tradingsymbol}: {exc!r}")
-        return jsonify({"ok": False, "error": str(exc)}), 500
+    req_accounts = incoming.get("account_ids")
+    acc_quantities = incoming.get("account_quantities") or {}
+    use_multiplier = bool(incoming.get("use_multiplier", True))
+    all_configured = account_manager.load_accounts(load_settings)
+    acc_cfg_map = {a["id"]: a for a in all_configured}
 
-    # Order has succeeded! Ensure logging or WebSocket emit never crashes the response
-    is_dry = bool(res.get("dry_run", False))
-    order_id = res.get("order_id", "DRY_RUN_ORDER")
-    protection_summary = {}
-    try:
-        guardian = _ensure_guardian_started(kite_client)
-        if guardian:
-            guardian.register_order(
+    with STATE_LOCK:
+        state_accounts = dict(STATE.get("accounts", {}))
+        primary_client = STATE.get("kite_client")
+        primary_logged = STATE.get("logged_in", False)
+
+    # Resolve target account IDs
+    if req_accounts == "ALL":
+        target_ids = [a["id"] for a in all_configured if a.get("enabled", True)]
+    elif isinstance(req_accounts, list) and len(req_accounts) > 0:
+        target_ids = [str(x).strip() for x in req_accounts if str(x).strip()]
+    else:
+        target_ids = ["primary"]
+
+    # Build execution list of (acc_id, client, acc_cfg, qty)
+    exec_targets = []
+    for aid in target_ids:
+        rt = state_accounts.get(aid, {})
+        client = rt.get("client") or (primary_client if aid == "primary" else None)
+        is_logged = bool(rt.get("logged_in")) or (aid == "primary" and primary_logged and primary_client is not None)
+        if not is_logged or client is None:
+            continue
+        acc_cfg = acc_cfg_map.get(aid, {"id": aid, "label": aid, "dry_run": settings.get("dry_run", True), "lot_multiplier": 1})
+        client.settings["dry_run"] = bool(acc_cfg.get("dry_run", settings.get("dry_run", True)))
+        if aid in acc_quantities:
+            qty = int(acc_quantities[aid])
+        elif use_multiplier and len(target_ids) > 1:
+            qty = base_quantity * max(1, int(acc_cfg.get("lot_multiplier", 1)))
+        else:
+            qty = base_quantity
+        if qty > 0:
+            exec_targets.append((aid, client, acc_cfg, qty))
+
+    if not exec_targets:
+        return jsonify({"ok": False, "error": "No logged-in target Kite account available. Please login first."}), 400
+
+    log = _make_log()
+
+    def _exec_one(target_tuple):
+        aid, client, acc_cfg, qty = target_tuple
+        label = acc_cfg.get("label", aid)
+        try:
+            res = client.place_market_order(
                 tradingsymbol=tradingsymbol,
                 exchange=exchange,
                 transaction_type=transaction_type,
-                quantity=quantity,
+                quantity=qty,
                 product=product,
-                dry_run=is_dry,
             )
-            protection_summary = guardian.get_config()
-    except Exception as g_exc:
-        print(f"[scanner] Guardian register_order note: {g_exc!r}")
+            is_dry = bool(res.get("dry_run", False))
+            order_id = res.get("order_id", "DRY_RUN_ORDER")
+            protection_summary = {}
+            try:
+                g = _ensure_guardian_started(client, account_id=aid)
+                if g:
+                    g.register_order(
+                        tradingsymbol=tradingsymbol,
+                        exchange=exchange,
+                        transaction_type=transaction_type,
+                        quantity=qty,
+                        product=product,
+                        dry_run=is_dry,
+                    )
+                    protection_summary = g.get_config()
+            except Exception as g_exc:
+                print(f"[scanner] Guardian register_order note ({aid}): {g_exc!r}")
 
-    try:
-        log(f"[scanner] {'[DRY RUN] ' if is_dry else '[LIVE] '}Order executed: {transaction_type} {quantity} x {tradingsymbol} ({exchange}/{product}) -> ID: {order_id}")
-        socketio.emit("scanner_order_placed", res)
-    except Exception as log_exc:
-        print(f"[scanner] Post-order notification note: {log_exc!r}")
+            try:
+                log(f"[scanner] [{label}] {'[DRY RUN] ' if is_dry else '[LIVE] '}Order executed: {transaction_type} {qty} x {tradingsymbol} ({exchange}/{product}) -> ID: {order_id}")
+                socketio.emit("scanner_order_placed", {**res, "account_id": aid, "label": label})
+            except Exception:
+                pass
+            return {"ok": True, "account_id": aid, "label": label, "result": res, "protection": protection_summary}
+        except Exception as exc:  # noqa: BLE001
+            log(f"[scanner] [{label}] Order placement failed for {tradingsymbol}: {exc!r}")
+            return {"ok": False, "account_id": aid, "label": label, "error": str(exc)}
 
-    return jsonify({"ok": True, "result": res, "protection": protection_summary})
+    if len(exec_targets) == 1:
+        per_results = [_exec_one(exec_targets[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=min(8, len(exec_targets))) as pool:
+            per_results = list(pool.map(_exec_one, exec_targets))
+
+    succeeded = [r for r in per_results if r.get("ok")]
+    if not succeeded:
+        return jsonify({"ok": False, "error": per_results[0].get("error", "Order failed"), "results": per_results}), 500
+
+    first_ok = succeeded[0]
+    return jsonify({
+        "ok": True,
+        "result": first_ok["result"],
+        "protection": first_ok.get("protection", {}),
+        "results": per_results,
+    })
+
+
+def _get_guardian_for_account(account_id="primary"):
+    aid = account_id or "primary"
+    with STATE_LOCK:
+        rt = STATE["accounts"].get(aid, {})
+        client = rt.get("client") or (STATE.get("kite_client") if aid == "primary" else None)
+        g = rt.get("guardian") or (STATE.get("guardian") if aid == "primary" else None)
+        logged = rt.get("logged_in") or (STATE.get("logged_in") if aid == "primary" else False)
+    if not logged or client is None:
+        return None, None
+    if g is None:
+        g = _ensure_guardian_started(client, account_id=aid)
+    return client, g
 
 
 @app.route("/api/guardian/status", methods=["GET"])
 def guardian_status_route():
-    """Returns live Kite positions, combined MTM, Trailing SL, and risk guardian state."""
-    with STATE_LOCK:
-        logged_in = STATE.get("logged_in")
-        client = STATE.get("kite_client")
-        g = STATE.get("guardian")
-    if not logged_in or client is None:
-        return jsonify({"ok": False, "logged_in": False, "positions": [], "config": position_guardian.DEFAULT_GUARDIAN_CONFIG})
-    if g is None:
-        g = _ensure_guardian_started(client)
-    return jsonify({"ok": True, "logged_in": True, **g.get_state()})
+    """Returns live Kite positions, combined MTM, Trailing SL, and risk guardian state across accounts."""
+    req_acc = (request.args.get("account_id") or "primary").strip()
+    accounts_cfg = account_manager.load_accounts(load_settings)
+    per_accounts = []
+    combined_mtm = 0.0
+    combined_day_pnl = 0.0
+    combined_peak = 0.0
+    combined_open = 0
+    combined_closed = 0
+
+    for acc in accounts_cfg:
+        aid = acc.get("id", "primary")
+        client, g = _get_guardian_for_account(aid)
+        if g is not None:
+            st = g.get_state()
+            combined_mtm += float(st.get("current_mtm") or 0.0)
+            combined_day_pnl += float(st.get("day_total_pnl") or 0.0)
+            combined_peak += float(st.get("peak_mtm") or 0.0)
+            combined_open += int(st.get("open_count") or 0)
+            combined_closed += int(st.get("closed_count") or 0)
+            per_accounts.append({
+                "account_id": aid,
+                "label": acc.get("label", aid),
+                "logged_in": True,
+                "user_name": getattr(client, "_user_name", acc.get("label", aid)),
+                **st,
+            })
+
+    if not per_accounts:
+        return jsonify({
+            "ok": False,
+            "logged_in": False,
+            "positions": [],
+            "closed_positions": [],
+            "accounts": [],
+            "combined": {"current_mtm": 0.0, "day_total_pnl": 0.0, "peak_mtm": 0.0, "open_count": 0, "closed_count": 0},
+            "config": position_guardian.DEFAULT_GUARDIAN_CONFIG,
+        })
+
+    if req_acc == "all":
+        all_open = []
+        all_closed = []
+        all_events = []
+        for a in per_accounts:
+            for p in a.get("positions", []):
+                all_open.append({**p, "account_id": a["account_id"], "account_label": a["label"]})
+            for cp in a.get("closed_positions", []):
+                all_closed.append({**cp, "account_id": a["account_id"], "account_label": a["label"]})
+            for ev in a.get("events", []):
+                all_events.append({**ev, "message": f"[{a['label']}] {ev['message']}"})
+        base = dict(per_accounts[0])
+        base["positions"] = all_open
+        base["closed_positions"] = all_closed
+        base["open_count"] = combined_open
+        base["closed_count"] = combined_closed
+        base["current_mtm"] = round(combined_mtm, 2)
+        base["day_total_pnl"] = round(combined_day_pnl, 2)
+        base["peak_mtm"] = round(combined_peak, 2)
+        base["events"] = all_events[:10]
+    else:
+        selected = next((a for a in per_accounts if a["account_id"] == req_acc), per_accounts[0])
+        base = dict(selected)
+
+    return jsonify({
+        "ok": True,
+        "logged_in": True,
+        **base,
+        "accounts": per_accounts,
+        "combined": {
+            "current_mtm": round(combined_mtm, 2),
+            "day_total_pnl": round(combined_day_pnl, 2),
+            "peak_mtm": round(combined_peak, 2),
+            "open_count": combined_open,
+            "closed_count": combined_closed,
+        },
+    })
 
 
 @app.route("/api/guardian/config", methods=["POST"])
 def guardian_config_route():
-    """Updates MTM Stop Loss, Trailing Stop Loss, and Per-Position SL rules."""
-    with STATE_LOCK:
-        client = STATE.get("kite_client")
-        g = STATE.get("guardian")
-    if g is None and client is not None:
-        g = _ensure_guardian_started(client)
+    """Updates MTM Stop Loss, Trailing Stop Loss, and Per-Position SL rules for an account."""
     incoming = request.get_json(force=True, silent=True) or {}
+    acc_id = (incoming.get("account_id") or "primary").strip()
+    if acc_id == "all":
+        acc_id = "primary"
+    client, g = _get_guardian_for_account(acc_id)
     if g is not None:
         state = g.update_config(incoming)
-        return jsonify({"ok": True, **state})
+        return jsonify({"ok": True, "account_id": acc_id, **state})
     # Offline settings fallback
-    settings = load_settings()
-    for bool_k in ("mtm_sl_enabled", "trailing_sl_enabled", "per_pos_sl_enabled", "target_enabled"):
-        if bool_k in incoming:
-            settings[bool_k] = bool(incoming[bool_k])
-            if bool_k == "mtm_sl_enabled":
-                settings["sl_enabled"] = bool(incoming[bool_k])
-    for num_k in ("max_loss", "trailing_activation", "trailing_gap", "per_pos_sl_pct", "target_profit"):
-        if num_k in incoming:
-            try:
-                settings[num_k] = float(incoming[num_k])
-            except (TypeError, ValueError):
-                pass
-    save_settings(settings)
-    return jsonify({"ok": True, "config": settings})
+    updated = account_manager.add_or_update_account({**incoming, "id": acc_id}, load_settings, save_settings)
+    return jsonify({"ok": True, "account_id": acc_id, "config": updated})
 
 
 @app.route("/api/guardian/exit_position", methods=["POST"])
 def guardian_exit_position_route():
-    """Squares off a single open position immediately."""
-    with STATE_LOCK:
-        client = STATE.get("kite_client")
-        g = STATE.get("guardian")
-    if not client:
-        return jsonify({"ok": False, "error": "Please login first"}), 400
-    if g is None:
-        g = _ensure_guardian_started(client)
+    """Squares off a single open position immediately on the specified account."""
     incoming = request.get_json(force=True, silent=True) or {}
+    acc_id = (incoming.get("account_id") or "primary").strip()
+    client, g = _get_guardian_for_account(acc_id)
+    if not client or not g:
+        return jsonify({"ok": False, "error": f"Account [{acc_id}] is not logged in"}), 400
     key = incoming.get("key", "")
     sym = incoming.get("tradingsymbol", "")
     st = g.get_state()
@@ -1352,14 +1578,27 @@ def guardian_exit_position_route():
 
 @app.route("/api/guardian/exit_all", methods=["POST"])
 def guardian_exit_all_route():
-    """Emergency square-off of ALL open Kite and simulated positions."""
-    with STATE_LOCK:
-        client = STATE.get("kite_client")
-        g = STATE.get("guardian")
-    if not client:
+    """Emergency square-off of open positions for one account or ALL connected accounts."""
+    incoming = request.get_json(force=True, silent=True) or {}
+    acc_id = (incoming.get("account_id") or "all").strip()
+    if acc_id == "all":
+        accounts_cfg = account_manager.load_accounts(load_settings)
+        total_exited = 0
+        all_res = []
+        for acc in accounts_cfg:
+            aid = acc.get("id", "primary")
+            client, g = _get_guardian_for_account(aid)
+            if g is not None:
+                r = g.square_off_all(reason="USER_PANIC_SQUARE_OFF_ALL", trigger_type="MANUAL_EXIT_ALL")
+                total_exited += int(r.get("exited") or 0)
+                all_res.append({"account_id": aid, **r})
+        if not all_res:
+            return jsonify({"ok": False, "error": "Please login first"}), 400
+        return jsonify({"ok": True, "exited": total_exited, "results": all_res})
+
+    client, g = _get_guardian_for_account(acc_id)
+    if not client or not g:
         return jsonify({"ok": False, "error": "Please login first"}), 400
-    if g is None:
-        g = _ensure_guardian_started(client)
     res = g.square_off_all(reason="USER_PANIC_SQUARE_OFF_ALL", trigger_type="MANUAL_EXIT_ALL")
     return jsonify(res)
 
@@ -1425,28 +1664,33 @@ def scanner_backtest_route():
 # ---------------------------------------------------------------------------
 
 def _try_restore_session():
-    settings = load_settings()
-    if not settings.get("kite_api_key") or not settings.get("kite_api_secret"):
-        return
-    cached_token = load_cached_access_token()
-    if not cached_token:
-        return
-    try:
-        client = KiteClient(settings, log=print)
-        client.kite.set_access_token(cached_token)
-        prof = client.kite.profile()
-        user_name = prof.get("user_name") or prof.get("user_id") or "Kite User"
-        client._user_name = user_name
-        with STATE_LOCK:
-            STATE["kite_client"] = client
-            STATE["logged_in"] = True
-        _ensure_guardian_started(client)
-        print(f"[app] restored today's Kite session for {user_name} from token.json — no need to log in again")
-    except Exception as exc:  # noqa: BLE001
-        print(f"[app] cached session in token.json is invalid/expired ({exc!r}) — Login will be needed")
-        with STATE_LOCK:
-            STATE["kite_client"] = None
-            STATE["logged_in"] = False
+    accounts = account_manager.load_accounts(load_settings)
+    for acc in accounts:
+        acc_id = acc.get("id", "primary")
+        acc_settings = account_manager.make_account_settings_loader(acc_id, load_settings)()
+        if not acc_settings.get("kite_api_key") or not acc_settings.get("kite_api_secret"):
+            continue
+        cached_token = load_cached_access_token(acc_id)
+        if not cached_token:
+            continue
+        try:
+            client = KiteClient(acc_settings, log=print, account_id=acc_id)
+            client.kite.set_access_token(cached_token)
+            prof = client.kite.profile()
+            user_name = prof.get("user_name") or prof.get("user_id") or "Kite User"
+            client._user_name = user_name
+            with STATE_LOCK:
+                if acc_id == "primary":
+                    STATE["kite_client"] = client
+                    STATE["logged_in"] = True
+            _ensure_guardian_started(client, account_id=acc_id)
+            print(f"[app] restored today's Kite session [{acc_id}] for {user_name} — no need to log in again")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[app] cached session for [{acc_id}] is invalid/expired ({exc!r}) — Login will be needed")
+            if acc_id == "primary":
+                with STATE_LOCK:
+                    STATE["kite_client"] = None
+                    STATE["logged_in"] = False
 
 
 # ---------------------------------------------------------------------------

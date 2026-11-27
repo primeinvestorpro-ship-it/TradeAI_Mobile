@@ -1713,6 +1713,22 @@ popBtnTrade.addEventListener('click', async () => {
     popOrderFeedback.textContent = '';
   }
 
+  // Populate multi-account checkboxes
+  const accBox = $('popAccountCheckboxes');
+  if (accBox) {
+    const accs = window._kiteAccounts || [{ id: 'primary', label: 'Primary Kite', logged_in: true, lot_multiplier: 1 }];
+    accBox.innerHTML = accs.map(a => {
+      const dis = a.logged_in ? '' : 'disabled';
+      const chk = a.logged_in ? 'checked' : '';
+      const modeTag = a.dry_run ? 'SIM' : 'LIVE';
+      const statusTxt = a.logged_in ? `${a.user_name || a.label} (${a.lot_multiplier || 1}x, ${modeTag})` : `${a.label} (Login Needed)`;
+      return `<label style="display:inline-flex;align-items:center;gap:5px;cursor:${a.logged_in ? 'pointer' : 'not-allowed'};opacity:${a.logged_in ? 1 : 0.6};">
+        <input type="checkbox" class="pop-acc-chk" value="${a.id}" ${chk} ${dis} />
+        <span><strong>${statusTxt}</strong></span>
+      </label>`;
+    }).join('');
+  }
+
   popTradeConfirm.classList.remove('hidden');
   popBtnTrade.classList.add('hidden');
 
@@ -1902,6 +1918,8 @@ popBtnConfirmOrder.addEventListener('click', async () => {
   const lotSize = atm.lot_size || 1;
   const quantity = lots * lotSize;
   const product = (popOrderProduct ? popOrderProduct.value : 'MIS').toUpperCase();
+  const checkedAccs = Array.from(document.querySelectorAll('.pop-acc-chk:checked')).map(el => el.value);
+  const accountIds = checkedAccs.length > 0 ? checkedAccs : ['primary'];
 
   popBtnConfirmOrder.disabled = true;
   popBtnConfirmOrder.textContent = '⏳ Executing Order...';
@@ -1916,6 +1934,8 @@ popBtnConfirmOrder.addEventListener('click', async () => {
         transaction_type: 'BUY',
         quantity: quantity,
         product: product,
+        account_ids: accountIds,
+        use_multiplier: true,
       }),
     });
     
@@ -1931,22 +1951,25 @@ popBtnConfirmOrder.addEventListener('click', async () => {
     }
 
     if (data.ok) {
-      const r = data.result || {};
-      const isDry = !!r.dry_run;
-      const orderId = r.order_id || 'SIMULATED';
+      const results = data.results || [{ ok: true, label: 'Primary', result: data.result, protection: data.protection }];
+      const summaryParts = results.map(item => {
+        if (!item.ok) return `✗ ${item.label}: ${item.error}`;
+        const r = item.result || {};
+        const tag = r.dry_run ? 'DRY' : 'LIVE';
+        return `✓ ${item.label} [${tag} ${r.order_id || 'SIM'}]`;
+      });
       const prot = data.protection || {};
       const protText = prot.mtm_sl_enabled
-        ? ` | 🛡️ Armed: MTM SL ₹-${prot.max_loss || 4000}${prot.trailing_sl_enabled ? ` + Trail @ ₹${prot.trailing_activation || 1500}` : ''}`
+        ? ` | 🛡️ Armed: MTM SL ₹-${prot.max_loss || 2500}${prot.trailing_sl_enabled ? ` + Trail @ ₹${prot.trailing_activation || 1500}` : ''}`
         : '';
       if (popOrderFeedback) {
         popOrderFeedback.className = 'cond-pill cond-pass';
         popOrderFeedback.classList.remove('hidden');
-        popOrderFeedback.textContent = (isDry
-          ? `✓ [DRY RUN] Order simulated: BUY ${quantity} x ${atm.symbol}`
-          : `✓ LIVE Order Triggered! Order ID: ${orderId}`) + protText;
+        popOrderFeedback.textContent = summaryParts.join(' · ') + protText;
       }
-      addLog(`[scanner] ${isDry ? '[DRY RUN] ' : '⚡ [LIVE] '}Order executed for ${atm.symbol} (Qty: ${quantity}, ID: ${orderId})${protText}`, isDry ? 'info' : 'warn');
+      addLog(`[scanner] Order punched (${summaryParts.join(' · ')})${protText}`, 'info');
       if (typeof window.refreshGuardianStatus === 'function') window.refreshGuardianStatus();
+      if (typeof window.refreshAccountsList === 'function') window.refreshAccountsList();
 
       setTimeout(() => {
         popTradeConfirm.classList.add('hidden');
@@ -3061,11 +3084,13 @@ function renderGuardianState(st) {
           ? '<span class="badge badge-success" style="font-size:10px;">LONG</span>'
           : '<span class="badge badge-danger" style="font-size:10px;">SHORT</span>';
         const simTag = p.simulated ? ' <span class="badge badge-neutral" style="font-size:9px;">SIM</span>' : '';
+        const accTag = p.account_label ? ` <span class="badge badge-info" style="font-size:9px;">${p.account_label}</span>` : '';
         const slTxt = p.sl_price != null ? `₹${Number(p.sl_price).toFixed(2)}` : '—';
         const safeKey = encodeURIComponent(p.key || '');
         const safeSym = encodeURIComponent(p.tradingsymbol || '');
+        const accId = encodeURIComponent(p.account_id || currentGuardianAccountId || 'primary');
         return `<tr>
-          <td><strong>${p.tradingsymbol}</strong>${simTag}</td>
+          <td><strong>${p.tradingsymbol}</strong>${accTag}${simTag}</td>
           <td>${sideBadge}</td>
           <td><strong>${p.quantity}</strong></td>
           <td>₹${Number(p.average_price || 0).toFixed(2)}</td>
@@ -3073,7 +3098,7 @@ function renderGuardianState(st) {
           <td style="font-weight:800;color:${pnlColor};">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
           <td style="font-weight:700;color:${pnlColor};">${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%</td>
           <td style="color:#dc2626;font-weight:700;">${slTxt}</td>
-          <td><button type="button" class="btn btn-danger btn-sm" onclick="guardianExitPosition('${safeKey}', '${safeSym}')" style="padding:2px 8px;font-size:11px;font-weight:700;">Exit</button></td>
+          <td><button type="button" class="btn btn-danger btn-sm" onclick="guardianExitPosition('${safeKey}', '${safeSym}', '${accId}')" style="padding:2px 8px;font-size:11px;font-weight:700;">Exit</button></td>
         </tr>`;
       });
 
@@ -3082,12 +3107,13 @@ function renderGuardianState(st) {
         const pct = Number(p.pnl_pct || 0);
         const pnlColor = pnl >= 0 ? '#059669' : '#dc2626';
         const simTag = p.simulated ? ' <span class="badge badge-neutral" style="font-size:9px;">SIM</span>' : '';
+        const accTag = p.account_label ? ` <span class="badge badge-info" style="font-size:9px;">${p.account_label}</span>` : '';
         const tradedTxt = p.traded_qty ? `0 (${p.traded_qty})` : '0';
         const exitPriceTxt = p.exit_price != null && Number(p.exit_price) > 0
           ? `₹${Number(p.exit_price).toFixed(2)}`
           : `₹${Number(p.last_price || 0).toFixed(2)}`;
         return `<tr style="opacity:0.78;background:#f8fafc;">
-          <td><strong>${p.tradingsymbol}</strong>${simTag}</td>
+          <td><strong>${p.tradingsymbol}</strong>${accTag}${simTag}</td>
           <td><span class="badge badge-neutral" style="font-size:10px;background:#e2e8f0;color:#475569;">CLOSED (${p.prev_side || 'FLAT'})</span></td>
           <td>${tradedTxt}</td>
           <td>₹${Number(p.average_price || 0).toFixed(2)}</td>
@@ -3111,9 +3137,152 @@ function renderGuardianState(st) {
   }
 }
 
+let currentGuardianAccountId = 'all';
+window._kiteAccounts = [];
+
+function renderAccountPills() {
+  const pillsEl = $('guardianAccountPills');
+  if (!pillsEl) return;
+  const accs = window._kiteAccounts || [];
+  const allCls = currentGuardianAccountId === 'all' ? 'btn-primary' : 'btn-secondary';
+  let html = `<button type="button" class="btn btn-sm ${allCls}" onclick="selectGuardianAccount('all')" style="font-size:11px;padding:3px 10px;font-weight:700;">All Accounts (Combined)</button>`;
+
+  accs.forEach(a => {
+    const activeCls = currentGuardianAccountId === a.id ? 'btn-primary' : 'btn-secondary';
+    const dot = a.logged_in ? '🟢' : '⚪';
+    const nameTxt = a.user_name || a.label || a.id;
+    const mtm = Number(a.current_mtm || 0);
+    const mtmBadge = a.logged_in ? ` (${mtm >= 0 ? '+' : ''}₹${mtm.toFixed(0)})` : '';
+    html += `<span style="display:inline-flex;align-items:center;gap:3px;">
+      <button type="button" class="btn btn-sm ${activeCls}" onclick="selectGuardianAccount('${a.id}')" style="font-size:11px;padding:3px 9px;font-weight:600;">${dot} ${nameTxt}${mtmBadge}</button>`;
+    if (!a.logged_in) {
+      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="loginKiteAccount('${a.id}')" style="font-size:10px;padding:2px 6px;color:#0284c7;font-weight:700;" title="Login via Kite">Login</button>`;
+      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="manualLoginKiteAccount('${a.id}')" style="font-size:10px;padding:2px 6px;" title="Paste Request Token">Token</button>`;
+    }
+    if (a.id !== 'primary') {
+      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="deleteKiteAccount('${a.id}')" style="font-size:10px;padding:2px 5px;color:#dc2626;" title="Remove Account">✕</button>`;
+    }
+    html += `</span>`;
+  });
+  pillsEl.innerHTML = html;
+}
+
+window.selectGuardianAccount = function(accId) {
+  currentGuardianAccountId = accId || 'all';
+  renderAccountPills();
+  refreshGuardianStatus();
+};
+
+async function refreshAccountsList() {
+  try {
+    const res = await fetch('/api/accounts');
+    const d = await res.json();
+    if (d.ok && Array.isArray(d.accounts)) {
+      window._kiteAccounts = d.accounts;
+      renderAccountPills();
+    }
+  } catch (e) {}
+}
+window.refreshAccountsList = refreshAccountsList;
+
+window.openAddAccountModal = function() {
+  const ov = $('addAccountModalOverlay');
+  if (ov) ov.classList.remove('hidden');
+  const fb = $('newAccFeedback');
+  if (fb) { fb.classList.add('hidden'); fb.textContent = ''; }
+};
+
+window.closeAddAccountModal = function() {
+  const ov = $('addAccountModalOverlay');
+  if (ov) ov.classList.add('hidden');
+};
+
+window.saveNewKiteAccount = async function() {
+  const payload = {
+    label: ($('newAccLabel') ? $('newAccLabel').value : '').trim() || 'Account 2',
+    api_key: ($('newAccApiKey') ? $('newAccApiKey').value : '').trim(),
+    api_secret: ($('newAccApiSecret') ? $('newAccApiSecret').value : '').trim(),
+    lot_multiplier: parseInt($('newAccLotMult') ? $('newAccLotMult').value : '1', 10) || 1,
+    max_loss: parseFloat($('newAccMaxLoss') ? $('newAccMaxLoss').value : '2500') || 2500,
+    dry_run: !!($('newAccDryRun') && $('newAccDryRun').checked),
+  };
+  const fb = $('newAccFeedback');
+  try {
+    const res = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      if (fb) {
+        fb.className = 'cond-pill cond-pass';
+        fb.classList.remove('hidden');
+        fb.textContent = `✓ Saved ${d.account.label}! Click "Login" next to it to connect Kite.`;
+      }
+      await refreshAccountsList();
+      setTimeout(() => { closeAddAccountModal(); }, 1000);
+    } else if (fb) {
+      fb.className = 'cond-pill cond-fail';
+      fb.classList.remove('hidden');
+      fb.textContent = `✗ ${d.error || 'Failed to save account'}`;
+    }
+  } catch (e) {}
+};
+
+window.loginKiteAccount = async function(accId) {
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accId, force: true }),
+    });
+    const d = await res.json();
+    if (d.ok && d.login_url) {
+      window.open(d.login_url, '_blank');
+      addLog(`[auth] Opened Kite login for [${accId}]...`, 'info');
+    } else {
+      addLog(`[auth] Login error for [${accId}]: ${d.error || 'Unknown error'}`, 'error');
+    }
+  } catch (e) {}
+};
+
+window.manualLoginKiteAccount = async function(accId) {
+  const raw = window.prompt(`Paste Kite redirect URL or request_token for [${accId}]:`);
+  if (!raw) return;
+  try {
+    const res = await fetch('/api/login/manual', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accId, token_input: raw }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      addLog(`✓ [${accId}] connected as ${d.user_name}`, 'info');
+      refreshAccountsList();
+      refreshGuardianStatus();
+    } else {
+      addLog(`✗ [${accId}] manual login failed: ${d.error}`, 'error');
+    }
+  } catch (e) {}
+};
+
+window.deleteKiteAccount = async function(accId) {
+  if (!window.confirm(`Remove Kite account [${accId}]?`)) return;
+  try {
+    const res = await fetch(`/api/accounts/${encodeURIComponent(accId)}`, { method: 'DELETE' });
+    const d = await res.json();
+    if (d.ok) {
+      if (currentGuardianAccountId === accId) currentGuardianAccountId = 'all';
+      refreshAccountsList();
+      refreshGuardianStatus();
+    }
+  } catch (e) {}
+};
+
 async function refreshGuardianStatus() {
   try {
-    const res = await fetch('/api/guardian/status');
+    const res = await fetch(`/api/guardian/status?account_id=${encodeURIComponent(currentGuardianAccountId)}`);
     const d = await res.json();
     if (d.ok) renderGuardianState(d);
   } catch (e) {}
@@ -3122,6 +3291,7 @@ window.refreshGuardianStatus = refreshGuardianStatus;
 
 window.saveGuardianConfig = async function() {
   const payload = {
+    account_id: currentGuardianAccountId === 'all' ? 'primary' : currentGuardianAccountId,
     mtm_sl_enabled: !!($('gdMtmSlEnabled') && $('gdMtmSlEnabled').checked),
     max_loss: parseFloat($('gdMaxLoss') ? $('gdMaxLoss').value : 4000) || 4000,
     trailing_sl_enabled: !!($('gdTrailEnabled') && $('gdTrailEnabled').checked),
@@ -3146,23 +3316,24 @@ window.saveGuardianConfig = async function() {
         msgEl.textContent = '✓ Risk rules armed!';
         setTimeout(() => { msgEl.textContent = ''; }, 3000);
       }
-      addLog(`[guardian] Risk rules updated: MTM SL ₹-${payload.max_loss}, Trail @ ₹${payload.trailing_activation} (gap ₹${payload.trailing_gap}), Pos SL ${payload.per_pos_sl_pct}%`, 'info');
+      addLog(`[guardian] Risk rules updated (${payload.account_id}): MTM SL ₹-${payload.max_loss}, Trail @ ₹${payload.trailing_activation} (gap ₹${payload.trailing_gap}), Pos SL ${payload.per_pos_sl_pct}%`, 'info');
     }
   } catch (e) {}
 };
 
-window.guardianExitPosition = async function(encKey, encSym) {
+window.guardianExitPosition = async function(encKey, encSym, encAccId) {
   const key = decodeURIComponent(encKey || '');
   const sym = decodeURIComponent(encSym || '');
+  const accId = decodeURIComponent(encAccId || 'primary');
   try {
     const res = await fetch('/api/guardian/exit_position', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ key: key, tradingsymbol: sym }),
+      body: JSON.stringify({ key: key, tradingsymbol: sym, account_id: accId }),
     });
     const d = await res.json();
     if (d.ok) {
-      addLog(`[guardian] Manual exit executed for ${sym}`, 'warn');
+      addLog(`[guardian] Manual exit executed for ${sym} (${accId})`, 'warn');
       refreshGuardianStatus();
     } else {
       addLog(`[guardian] Exit failed for ${sym}: ${d.error || 'Error'}`, 'error');
@@ -3172,7 +3343,11 @@ window.guardianExitPosition = async function(encKey, encSym) {
 
 window.guardianExitAll = async function() {
   try {
-    const res = await fetch('/api/guardian/exit_all', { method: 'POST' });
+    const res = await fetch('/api/guardian/exit_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: currentGuardianAccountId }),
+    });
     const d = await res.json();
     if (d.ok) {
       addLog(`[guardian] 🚨 Emergency Square-Off All executed (${d.exited || 0} positions closed)`, 'warn');
@@ -3183,15 +3358,25 @@ window.guardianExitAll = async function() {
 
 if (typeof socket !== 'undefined' && socket) {
   socket.on('guardian_update', (st) => {
-    renderGuardianState(st);
+    if (currentGuardianAccountId === 'all' || !st.account_id || st.account_id === currentGuardianAccountId) {
+      refreshGuardianStatus();
+    }
   });
   socket.on('guardian_alert', (al) => {
     if (al && al.reason) {
-      addLog(`🚨 [GUARDIAN ALERT] ${al.reason}`, 'warn');
+      addLog(`🚨 [GUARDIAN ALERT${al.account_id ? ' - ' + al.account_id : ''}] ${al.reason}`, 'warn');
     }
     refreshGuardianStatus();
   });
+  socket.on('login_status', (d) => {
+    if (d && d.status === 'success') {
+      refreshAccountsList();
+      refreshGuardianStatus();
+    }
+  });
 }
 
+setInterval(refreshAccountsList, 5000);
+setTimeout(refreshAccountsList, 600);
 setInterval(refreshGuardianStatus, 2500);
 setTimeout(refreshGuardianStatus, 800);

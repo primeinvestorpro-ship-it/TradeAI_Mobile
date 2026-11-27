@@ -90,18 +90,26 @@ def _wait_for_callback_token(timeout_seconds: int = LOGIN_TIMEOUT_SECONDS) -> st
     return tok
 
 
-def load_cached_access_token():
+def get_token_file(account_id=None):
+    """Return token cache path for a given account_id (defaults to token.json for primary)."""
+    if not account_id or account_id == "primary":
+        return TOKEN_FILE
+    tokens_dir = os.path.join(os.path.dirname(TOKEN_FILE), "tokens")
+    os.makedirs(tokens_dir, exist_ok=True)
+    safe_id = "".join(c for c in str(account_id) if c.isalnum() or c in ("-", "_"))
+    return os.path.join(tokens_dir, f"{safe_id}.json")
+
+
+def load_cached_access_token(account_id=None):
     """
-    Return today's cached Kite access_token from token.json, or None if it's
-    missing or from a previous day. This is what lets a login stay valid for
-    the whole trading day even if the app itself is restarted in between -
-    Kite's own tokens are valid until ~6 AM the next day regardless of
-    whether this process keeps running.
+    Return today's cached Kite access_token from token.json (or tokens/<account_id>.json),
+    or None if it's missing or from a previous day.
     """
-    if not os.path.exists(TOKEN_FILE):
+    tpath = get_token_file(account_id)
+    if not os.path.exists(tpath):
         return None
     try:
-        with open(TOKEN_FILE, "r") as f:
+        with open(tpath, "r") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -157,9 +165,11 @@ def extract_request_token(raw_input):
 
 
 class KiteClient:
-    def __init__(self, settings, log=print):
+    def __init__(self, settings, log=print, account_id=None):
         self.settings = settings
         self.log = log
+        self.account_id = account_id or "primary"
+        self.token_file = get_token_file(self.account_id)
         self.proxies = _build_proxies(settings.get("proxy"))
 
         try:
@@ -241,10 +251,10 @@ class KiteClient:
         self.log("[kite_client] login successful, access_token cached")
 
     def _load_cached_token(self):
-        return load_cached_access_token()
+        return load_cached_access_token(self.account_id)
 
     def _save_token(self, access_token):
-        with open(TOKEN_FILE, "w") as f:
+        with open(self.token_file, "w") as f:
             json.dump({"access_token": access_token, "date": _today_str()}, f)
 
     # --------------------------------------------------------- instruments
