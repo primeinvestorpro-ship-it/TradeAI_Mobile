@@ -102,6 +102,7 @@ if (viewBtnOptions) viewBtnOptions.addEventListener('click', () => applyViewMode
 function initChart() {
   if (currentChart) return;
   const container = $('chart');
+  if (!container) return;
   currentChart = LightweightCharts.createChart(container, {
     layout: { background: { color: '#172b4d' }, textColor: '#8898aa' },
     grid: { vertLines: { color: '#1f355d' }, horzLines: { color: '#1f355d' } },
@@ -205,7 +206,7 @@ socket.on('engine_event', evt => {
 
   if (t === 'universe_ready') {
     const sym = evt.ticker || '';
-    $('chartTicker').textContent = sym;
+    if ($('chartTicker')) $('chartTicker').textContent = sym;
     livePriceTicker.textContent = evt.futures_tradingsymbol || sym;
     $('scoreTicker').textContent = sym;
     addLog(`Universe: ${evt.futures_tradingsymbol} | Expiry: ${evt.nearest_expiry} | Lot: ${evt.lot_size}`);
@@ -569,7 +570,7 @@ function selectTicker(symbol) {
 
   // Immediately reflect selected stock in UI
   livePriceTicker.textContent = sym;
-  $('chartTicker').textContent = sym;
+  if ($('chartTicker')) $('chartTicker').textContent = sym;
   $('scoreTicker').textContent = sym;
   $('scoreCompany').textContent = 'Selected — click Analyze to evaluate';
 
@@ -657,7 +658,7 @@ btnAnalyze.addEventListener('click', () => {
   // Immediately reflect active ticker in scorecard header and chart
   $('scoreTicker').textContent = ticker;
   $('scoreCompany').textContent = 'Analyzing...';
-  $('chartTicker').textContent = ticker;
+  if ($('chartTicker')) $('chartTicker').textContent = ticker;
   livePriceTicker.textContent = ticker;
 
   // Persist ticker to settings immediately
@@ -934,7 +935,8 @@ function pollLtp() {
 /* ── Chart backfill ──────────────────────────── */
 function loadSpotChart(symOverride) {
   const sym = (symOverride || (tickerInput ? tickerInput.value : '') || '').trim().toUpperCase() || 'RELIANCE';
-  $('chartTicker').textContent = sym;
+  if ($('chartTicker')) $('chartTicker').textContent = sym;
+  if (!candleSeries) return;
   fetch(`/api/spot_chart?ticker=${encodeURIComponent(sym)}`).then(r => r.json()).then(d => {
     if (d.ok && candleSeries) {
       if (d.candles && d.candles.length) {
@@ -942,7 +944,7 @@ function loadSpotChart(symOverride) {
       } else {
         candleSeries.setData([]);
       }
-      $('chartTicker').textContent = d.spot_symbol || d.ticker || sym;
+      if ($('chartTicker')) $('chartTicker').textContent = d.spot_symbol || d.ticker || sym;
     }
   }).catch(() => {});
 }
@@ -1210,22 +1212,37 @@ if (btnVoiceToggle) {
     _voiceEnabled = !_voiceEnabled;
     btnVoiceToggle.textContent = _voiceEnabled ? '🔊 Voice: ON' : '🔇 Voice: OFF';
     btnVoiceToggle.className = 'btn btn-sm ' + (_voiceEnabled ? 'btn-secondary' : 'btn-danger');
-    if (!_voiceEnabled && window.speechSynthesis) {
+    if (window.speechSynthesis) {
       window.speechSynthesis.cancel();
+      if (_voiceEnabled) {
+        const testUtter = new SpeechSynthesisUtterance('Voice alerts enabled');
+        testUtter.rate = 1.05;
+        setTimeout(() => window.speechSynthesis.speak(testUtter), 40);
+      }
     }
   });
 }
 
+let _lastSpokenSigKey = '';
+let _lastSpokenSigAt = 0;
+
 function speakSignal(sig) {
   if (!_voiceEnabled || !('speechSynthesis' in window) || !sig) return;
   try {
-    window.speechSynthesis.cancel(); // Stop any pending utterance
-    const isBull = sig.direction === 'BULLISH';
-    const sym = sig.symbol || 'Stock';
-    const action = isBull ? 'Buy' : 'Sell';
-    const stratName = sig.strategy_id === 'E' ? 'Smart Money' : (sig.strategy_id === 'F' ? 'Breakout' : (sig.strategy_name || ''));
+    // Deduplicate rapid double-calls (e.g. socket.on + _showPopup within 2s)
+    const sigKey = `${sig.id || ''}_${sig.symbol || ''}_${sig.direction || ''}`;
+    const nowMs = Date.now();
+    if (sigKey === _lastSpokenSigKey && (nowMs - _lastSpokenSigAt) < 2500) {
+      return;
+    }
+    _lastSpokenSigKey = sigKey;
+    _lastSpokenSigAt = nowMs;
 
-    // Speak clearly: e.g. "Buy DATAPATTNS! Smart Money" or "Sell NIFTY! Breakout"
+    const isBull = sig.direction === 'BULLISH' || sig.direction === 'BUY_CALL' || sig.direction === 'LONG';
+    const sym = sig.symbol || 'Stock';
+    const action = isBull ? 'Confirmed Buy' : 'Confirmed Sell';
+    const stratName = sig.strategy_id === 'E' ? 'Smart Money' : (sig.strategy_id === 'F' ? 'Breakout' : (sig.strategy_id === 'G' ? 'G T I' : (sig.strategy_name || '')));
+
     const text = `${action} ${sym}! ${stratName}`;
     const utterance = new SpeechSynthesisUtterance(text);
 
@@ -1250,7 +1267,15 @@ function speakSignal(sig) {
       utterance.rate = 0.98;
     }
 
-    window.speechSynthesis.speak(utterance);
+    // Avoid Chrome SpeechSynthesis drop bug when cancel() and speak() run in same tick
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      window.speechSynthesis.cancel();
+      setTimeout(() => {
+        try { window.speechSynthesis.speak(utterance); } catch (e) {}
+      }, 60);
+    } else {
+      window.speechSynthesis.speak(utterance);
+    }
   } catch (err) {
     console.warn('[speech] voice synthesis error:', err);
   }
@@ -2212,7 +2237,7 @@ function restoreState() {
   });
   fetch('/api/last_analysis').then(r => r.json()).then(d => {
     if (d.universe) {
-      $('chartTicker').textContent = d.universe.ticker || '';
+      if ($('chartTicker')) $('chartTicker').textContent = d.universe.ticker || '';
       livePriceTicker.textContent = d.universe.futures_tradingsymbol || '';
     }
     if (d.analysis) {

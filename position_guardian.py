@@ -257,7 +257,11 @@ class PositionGuardian:
                 with self._lock:
                     self._last_error = str(exc)
                 self.log(f"[guardian] Poll error: {exc!r}")
-            self._stop_event.wait(self.poll_interval_sec)
+            # Poll faster (0.8s) while live positions are open to minimize SL slippage
+            with self._lock:
+                has_open = len(self._positions) > 0
+            wait_sec = min(self.poll_interval_sec, 0.8) if has_open else self.poll_interval_sec
+            self._stop_event.wait(wait_sec)
 
     def poll_once(self) -> Dict[str, Any]:
         cfg = self.get_config()
