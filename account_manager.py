@@ -175,12 +175,17 @@ def delete_account(account_id: str, settings_loader: Callable[[], Dict[str, Any]
 
 def make_account_settings_loader(account_id: str, global_settings_loader: Callable[[], Dict[str, Any]]) -> Callable[[], Dict[str, Any]]:
     """Return a settings_loader function scoped to a specific account."""
-    if not account_id or account_id == "primary":
-        return global_settings_loader
+    aid = account_id or "primary"
 
     def _loader() -> Dict[str, Any]:
         base = dict(global_settings_loader() or {})
-        acc = get_account_by_id(account_id, global_settings_loader)
+        acc = get_account_by_id(aid, global_settings_loader)
+        if aid == "primary":
+            if not base.get("kite_api_key") and acc and acc.get("api_key"):
+                base["kite_api_key"] = acc["api_key"]
+            if not base.get("kite_api_secret") and acc and acc.get("api_secret"):
+                base["kite_api_secret"] = acc["api_secret"]
+            return base
         if acc:
             base["kite_api_key"] = acc.get("api_key", "")
             base["kite_api_secret"] = acc.get("api_secret", "")
