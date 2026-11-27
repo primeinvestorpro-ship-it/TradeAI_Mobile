@@ -3238,8 +3238,8 @@ function renderAccountPills() {
     html += `<span style="display:inline-flex;align-items:center;gap:3px;">
       <button type="button" class="btn btn-sm ${activeCls}" onclick="selectGuardianAccount('${a.id}')" style="font-size:11px;padding:3px 9px;font-weight:600;">${dot} ${nameTxt}${mtmBadge}</button>`;
     if (!a.logged_in) {
-      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="loginKiteAccount('${a.id}')" style="font-size:10px;padding:2px 6px;color:#0284c7;font-weight:700;" title="Login via Kite">Login</button>`;
-      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="manualLoginKiteAccount('${a.id}')" style="font-size:10px;padding:2px 6px;" title="Paste Request Token">Token</button>`;
+      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="loginKiteAccount('${a.id}', true)" style="font-size:10px;padding:2px 6px;color:#0284c7;font-weight:700;" title="Open in Microsoft Edge (InPrivate)">Edge Login</button>`;
+      html += `<button type="button" class="btn btn-sm btn-secondary" onclick="manualLoginKiteAccount('${a.id}')" style="font-size:10px;padding:2px 6px;" title="Paste Request Token or Redirect URL">Token</button>`;
     }
     if (a.id !== 'primary') {
       html += `<button type="button" class="btn btn-sm btn-secondary" onclick="deleteKiteAccount('${a.id}')" style="font-size:10px;padding:2px 5px;color:#dc2626;" title="Remove Account">✕</button>`;
@@ -3313,26 +3313,27 @@ window.saveNewKiteAccount = async function() {
   } catch (e) {}
 };
 
-window.loginKiteAccount = async function(accId) {
+window.loginKiteAccount = async function(accId, preferEdge = true) {
   try {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_id: accId, force: true, incognito: accId !== 'primary' }),
+      body: JSON.stringify({ account_id: accId, force: true, incognito: accId !== 'primary', prefer_edge: preferEdge }),
     });
     const d = await res.json();
     if (d.ok && d.login_url) {
       if (d.launched_incognito) {
-        addLog(`[auth] Opened Chrome Incognito Kite login for [${accId}]. Complete login in the Incognito window!`, 'info');
+        addLog(`[auth] Opened ${d.launched_browser || 'Incognito'} Kite login for [${accId}]. Complete login there!`, 'info');
       } else {
         window.open(d.login_url, '_blank');
-        addLog(`[auth] Opened Kite login for [${accId}]. If already logged into another Zerodha user, open Incognito and paste redirect URL via "Token".`, 'info');
       }
     } else {
       window.alert(`Login error for ${accId}: ${d.error || 'Unknown error'}`);
       addLog(`[auth] Login error for [${accId}]: ${d.error || 'Unknown error'}`, 'error');
     }
-  } catch (e) {}
+  } catch (e) {
+    window.alert(`Login request failed for ${accId}: ${e.message || e}`);
+  }
 };
 
 window.manualLoginKiteAccount = async function(accId) {

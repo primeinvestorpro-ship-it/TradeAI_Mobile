@@ -525,24 +525,41 @@ def kite_callback():
     """
     return _handle_kite_redirect()
 
-def _launch_incognito_browser(url):
-    """Launch Chrome in --incognito (or Edge --inprivate) so a secondary Kite user can log in cleanly."""
+def _launch_incognito_browser(url, prefer_edge=True):
+    """Launch Microsoft Edge (--inprivate) or Chrome (--incognito) so a secondary Kite user can log in cleanly."""
     import subprocess
-    candidates = [
-        (r"C:\Program Files\Google\Chrome\Application\chrome.exe", "--incognito"),
-        (r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", "--incognito"),
-        (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"), "--incognito"),
-        (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "--inprivate"),
-        (r"C:\Program Files\Microsoft\Edge\Application\msedge.exe", "--inprivate"),
+    edge_candidates = [
+        (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe", "--inprivate", "Microsoft Edge (InPrivate)"),
+        (r"C:\Program Files\Microsoft\Edge\Application\msedge.exe", "--inprivate", "Microsoft Edge (InPrivate)"),
     ]
-    for exe, flag in candidates:
+    chrome_candidates = [
+        (r"C:\Program Files\Google\Chrome\Application\chrome.exe", "--incognito", "Chrome (Incognito)"),
+        (r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe", "--incognito", "Chrome (Incognito)"),
+        (os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"), "--incognito", "Chrome (Incognito)"),
+    ]
+    candidates = (edge_candidates + chrome_candidates) if prefer_edge else (chrome_candidates + edge_candidates)
+    for exe, flag, label in candidates:
         if exe and os.path.exists(exe):
             try:
                 subprocess.Popen([exe, flag, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                return True
+                return label
             except Exception:
                 pass
-    return False
+    return None
+
+
+@app.route("/api/accounts/<acc_id>/login_redirect", methods=["GET"])
+def account_login_redirect(acc_id):
+    """Direct HTTP redirect to Kite login for a given account_id (works with any browser)."""
+    acc_settings = account_manager.make_account_settings_loader(acc_id, load_settings)()
+    if not acc_settings.get("kite_api_key") or not acc_settings.get("kite_api_secret"):
+        return f"API key/secret not configured for {acc_id}", 400
+    with STATE_LOCK:
+        STATE["pending_login_account_id"] = acc_id
+    set_callback_result(token=None, error=None)
+    client_pre = KiteClient(acc_settings, log=_make_log(), account_id=acc_id)
+    from flask import redirect
+    return redirect(client_pre.kite.login_url())
 
 
 @app.route("/api/login", methods=["POST"])
@@ -551,6 +568,7 @@ def login():
     acc_id = (incoming.get("account_id") or "primary").strip()
     force = incoming.get("force", False)
     use_incognito = bool(incoming.get("incognito", acc_id != "primary"))
+    prefer_edge = bool(incoming.get("prefer_edge", True))
 
     with STATE_LOCK:
         if acc_id == "primary" and STATE["running"]:
@@ -592,16 +610,17 @@ def login():
     set_callback_result(token=None, error=None)
     socketio.emit("login_status", {"status": "waiting", "source": "redirect", "account_id": acc_id})
 
-    launched_incognito = False
+    launched_browser = None
     if use_incognito:
-        launched_incognito = _launch_incognito_browser(login_url)
+        launched_browser = _launch_incognito_browser(login_url, prefer_edge=prefer_edge)
 
     return jsonify({
         "ok": True,
         "account_id": acc_id,
         "login_url": login_url,
-        "launched_incognito": launched_incognito,
-        "message": f"Opened Incognito Kite login for [{acc_id}]..." if launched_incognito else f"Redirecting to Kite for [{acc_id}] authentication..."
+        "launched_incognito": bool(launched_browser),
+        "launched_browser": launched_browser,
+        "message": f"Opened {launched_browser} for [{acc_id}]..." if launched_browser else f"Redirecting to Kite for [{acc_id}] authentication..."
     })
 
 
