@@ -1341,6 +1341,35 @@ tbody tr:hover {
 .opt-prob-bar-up { background: var(--argon-success); }
 .opt-prob-bar-down { background: var(--argon-danger); }
 
+/* ── Manual Option Order Buy/Sell Buttons ────────────────────── */
+.opt-buy-btn, .opt-sell-btn {
+  padding: 2px 7px;
+  border-radius: 5px;
+  border: none;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  letter-spacing: .03em;
+  transition: opacity .15s, transform .1s;
+  white-space: nowrap;
+}
+.opt-buy-btn {
+  background: #15803d;
+  color: #dcfce7;
+}
+.opt-buy-btn:hover {
+  background: #16a34a;
+  transform: scale(1.05);
+}
+.opt-sell-btn {
+  background: #991b1b;
+  color: #fee2e2;
+}
+.opt-sell-btn:hover {
+  background: #dc2626;
+  transform: scale(1.05);
+}
+
 /* ── Settings Panel ──────────────────────────────────────────── */
 .settings-panel {
   padding: 20px 16px;

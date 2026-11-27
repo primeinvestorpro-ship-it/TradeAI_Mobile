@@ -1375,6 +1375,92 @@ def delete_account_route(account_id):
     return jsonify({"ok": True})
 
 
+@app.route("/api/option/manual_order", methods=["POST"])
+def option_manual_order():
+    """
+    Manual option buy/sell order from the Option Chain panel.
+    Expects JSON: { ticker, option_type (CE/PE), strike, tradingsymbol, expiry,
+                    transaction_type (BUY/SELL), lots, quantity, account_id }
+    Places a MARKET order on the specified account.
+    """
+    incoming = request.get_json(force=True, silent=True) or {}
+    acc_id          = (incoming.get("account_id") or "primary").strip()
+    tradingsymbol   = (incoming.get("tradingsymbol") or "").strip().upper()
+    ticker          = (incoming.get("ticker") or "").strip().upper()
+    option_type     = (incoming.get("option_type") or "CE").strip().upper()
+    strike          = incoming.get("strike")
+    expiry          = incoming.get("expiry", "")
+    transaction_type = (incoming.get("transaction_type") or "BUY").strip().upper()
+    quantity        = int(incoming.get("quantity") or incoming.get("lots", 1))
+
+    # Validate
+    if transaction_type not in ("BUY", "SELL"):
+        return jsonify({"ok": False, "error": "transaction_type must be BUY or SELL"}), 400
+    if option_type not in ("CE", "PE"):
+        return jsonify({"ok": False, "error": "option_type must be CE or PE"}), 400
+    if quantity < 1:
+        return jsonify({"ok": False, "error": "quantity must be >= 1"}), 400
+
+    # Resolve trading symbol if not provided
+    if not tradingsymbol and ticker and strike:
+        # Build NSE FNO symbol e.g. NIFTY26DEC125000CE
+        try:
+            exp_clean = str(expiry).replace("-", "").upper() if expiry else ""
+            tradingsymbol = f"{ticker}{exp_clean}{int(strike)}{option_type}"
+        except Exception:
+            tradingsymbol = f"{ticker}{int(strike)}{option_type}"
+
+    client, g = _get_guardian_for_account(acc_id)
+    if not client:
+        return jsonify({"ok": False, "error": f"Account [{acc_id}] is not logged in. Please login first."}), 400
+
+    log = _make_log()
+    acc_cfg = {}
+    with STATE_LOCK:
+        acc_cfg = STATE["accounts"].get(acc_id, {})
+    label = acc_cfg.get("label", acc_id)
+
+    try:
+        res = client.place_market_order(
+            tradingsymbol=tradingsymbol,
+            exchange="NFO",
+            transaction_type=transaction_type,
+            quantity=quantity,
+            product="MIS",
+        )
+        is_dry = bool(res.get("dry_run", False))
+        order_id = res.get("order_id", "DRY_RUN_ORDER")
+
+        # Register with guardian for MTM/SL tracking
+        if g:
+            try:
+                g.register_order(
+                    tradingsymbol=tradingsymbol,
+                    exchange="NFO",
+                    transaction_type=transaction_type,
+                    quantity=quantity,
+                    product="MIS",
+                    dry_run=is_dry,
+                )
+            except Exception as ge:
+                log(f"[manual_order] Guardian register note ({acc_id}): {ge!r}")
+
+        log(f"[manual_order] [{label}] {'[DRY RUN] ' if is_dry else '[LIVE] '}"
+            f"{transaction_type} {quantity} × {tradingsymbol} → Order ID: {order_id}")
+        try:
+            socketio.emit("scanner_order_placed", {
+                **res, "account_id": acc_id, "label": label,
+                "source": "manual_option_chain",
+            })
+        except Exception:
+            pass
+
+        return jsonify({"ok": True, "order_id": order_id, "result": res, "account_id": acc_id, "label": label})
+    except Exception as exc:  # noqa: BLE001
+        log(f"[manual_order] [{label}] Order failed for {tradingsymbol}: {exc!r}")
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
 @app.route("/api/scanner/order", methods=["POST"])
 def scanner_order():
     """

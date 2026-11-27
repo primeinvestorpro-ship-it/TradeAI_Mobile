@@ -573,22 +573,36 @@
           </div>
         </div>
 
-        <!-- 11-Row Option Chain Table -->
+        <!-- 11-Row Option Chain Table with Manual Buy/Sell -->
         <div class="table-container mt-12">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+            <span style="font-size:12px;font-weight:700;color:#94a3b8;letter-spacing:.05em;">📋 OPTION CHAIN — ATM ± 5 STRIKES</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <label style="font-size:12px;color:#94a3b8;font-weight:600;">Qty (Lots):</label>
+              <input id="manualOptLots" type="number" min="1" max="100" value="1"
+                style="width:60px;padding:4px 8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#f1f5f9;font-size:13px;font-weight:700;text-align:center;">
+              <label style="font-size:12px;color:#94a3b8;font-weight:600;">Account:</label>
+              <select id="manualOptAccount"
+                style="padding:4px 8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#f1f5f9;font-size:12px;">
+                <option value="primary">Ramesh (Primary)</option>
+              </select>
+              <button onclick="refreshOptionChainLive()" style="padding:4px 10px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#94a3b8;font-size:12px;cursor:pointer;" title="Refresh live LTP">🔄 Refresh</button>
+            </div>
+          </div>
           <table class="option-chain-table">
             <thead>
               <tr class="chain-header-top">
-                <th colspan="3" class="th-calls">CALLS</th>
+                <th colspan="3" class="th-calls">CALLS (CE)</th>
                 <th class="th-strike">STRIKE</th>
-                <th colspan="3" class="th-puts">PUTS</th>
+                <th colspan="3" class="th-puts">PUTS (PE)</th>
               </tr>
               <tr class="chain-header-sub">
                 <th class="th-calls">OI</th>
-                <th class="th-calls">Volume</th>
-                <th class="th-calls">LTP (₹)</th>
-                <th class="th-strike">Strike Price</th>
-                <th class="th-puts">LTP (₹)</th>
-                <th class="th-puts">Volume</th>
+                <th class="th-calls">Vol</th>
+                <th class="th-calls" style="min-width:100px;">LTP / BUY CE</th>
+                <th class="th-strike">Strike</th>
+                <th class="th-puts" style="min-width:100px;">LTP / BUY PE</th>
+                <th class="th-puts">Vol</th>
                 <th class="th-puts">OI</th>
               </tr>
             </thead>
@@ -596,6 +610,24 @@
               <tr><td colspan="7" class="text-center muted">Run analysis or select stock to load option chain...</td></tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- Manual Option Order Confirmation Modal -->
+        <div id="manualOptModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;">
+          <div style="background:#1e293b;border:1px solid #334155;border-radius:16px;padding:28px 32px;min-width:340px;max-width:420px;box-shadow:0 20px 60px rgba(0,0,0,.8);">
+            <h3 id="manualOptModalTitle" style="margin:0 0 16px;font-size:16px;font-weight:700;color:#f1f5f9;">Confirm Order</h3>
+            <div id="manualOptModalBody" style="font-size:13px;color:#cbd5e1;line-height:1.8;"></div>
+            <div style="display:flex;gap:12px;margin-top:20px;">
+              <button id="manualOptConfirmBtn" onclick="confirmManualOptOrder()"
+                style="flex:1;padding:10px;border-radius:8px;border:none;font-size:14px;font-weight:700;cursor:pointer;background:#22c55e;color:#fff;">
+                ✅ Confirm
+              </button>
+              <button onclick="closeManualOptModal()"
+                style="flex:1;padding:10px;border-radius:8px;border:1px solid #475569;background:transparent;color:#94a3b8;font-size:14px;font-weight:700;cursor:pointer;">
+                ✖ Cancel
+              </button>
+            </div>
+          </div>
         </div>
       </section>
 
@@ -1450,6 +1482,6 @@
   </script>
   <script src="/static/socket.io.min.js"></script>
   <script src="/static/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/dashboard.js?v=4.1"></script>
+  <script src="/static/dashboard.js?v=4.2"></script>
 </body>
 </html>

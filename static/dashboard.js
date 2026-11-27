@@ -434,8 +434,19 @@ function renderOptionChain(chainData) {
   $('optProbUpBar').style.width = `${(upProb * 100).toFixed(1)}%`;
   $('optProbDownBar').style.width = `${(dnProb * 100).toFixed(1)}%`;
 
-  // 11-Row Option Chain Table
+  // 11-Row Option Chain Table with Buy/Sell buttons
+  // Store chain data for reference in order placement
+  window._lastOptionChainData = chainData;
   const tbody = $('optionChainTableBody');
+
+  // Populate account selector with active accounts
+  const accSel = $('manualOptAccount');
+  if (accSel && window._accountList && window._accountList.length) {
+    accSel.innerHTML = window._accountList.map(a =>
+      `<option value="${a.id}">${a.label || a.id}</option>`
+    ).join('');
+  }
+
   if (chainData.rows && chainData.rows.length) {
     tbody.innerHTML = chainData.rows.map(r => {
       const isAtm = r.is_atm;
@@ -451,21 +462,45 @@ function renderOptionChain(chainData) {
       if (isRes) strikeLabel += ` <span class="wall-tag wall-tag-res">RES</span>`;
       if (isSup) strikeLabel += ` <span class="wall-tag wall-tag-sup">SUP</span>`;
 
-      const ceOi = (r.ce && r.ce.oi) ? Number(r.ce.oi).toLocaleString() : '0';
-      const ceVol = (r.ce && r.ce.volume) ? Number(r.ce.volume).toLocaleString() : '0';
-      const ceLtp = (r.ce && r.ce.ltp != null) ? `₹${Number(r.ce.ltp).toFixed(2)}` : '—';
+      const ceOi  = (r.ce && r.ce.oi)     ? Number(r.ce.oi).toLocaleString()     : '0';
+      const ceVol = (r.ce && r.ce.volume)  ? Number(r.ce.volume).toLocaleString() : '0';
+      const ceLtpNum = (r.ce && r.ce.ltp != null) ? Number(r.ce.ltp) : null;
+      const ceSym = r.ce ? (r.ce.tradingsymbol || r.ce.symbol || '') : '';
+      const ceLtpDisp = ceLtpNum != null ? `₹${ceLtpNum.toFixed(2)}` : '—';
 
-      const peOi = (r.pe && r.pe.oi) ? Number(r.pe.oi).toLocaleString() : '0';
-      const peVol = (r.pe && r.pe.volume) ? Number(r.pe.volume).toLocaleString() : '0';
-      const peLtp = (r.pe && r.pe.ltp != null) ? `₹${Number(r.pe.ltp).toFixed(2)}` : '—';
+      const peOi  = (r.pe && r.pe.oi)     ? Number(r.pe.oi).toLocaleString()     : '0';
+      const peVol = (r.pe && r.pe.volume)  ? Number(r.pe.volume).toLocaleString() : '0';
+      const peLtpNum = (r.pe && r.pe.ltp != null) ? Number(r.pe.ltp) : null;
+      const peSym = r.pe ? (r.pe.tradingsymbol || r.pe.symbol || '') : '';
+      const peLtpDisp = peLtpNum != null ? `₹${peLtpNum.toFixed(2)}` : '—';
+
+      const expiry = chainData.nearest_expiry || '';
+      const ticker = chainData.ticker || '';
+
+      // Encode data into data-* for button handlers
+      const ceBuyData  = `'${ticker}','CE',${r.strike},'${ceSym}','${expiry}','BUY'`;
+      const ceSellData = `'${ticker}','CE',${r.strike},'${ceSym}','${expiry}','SELL'`;
+      const peBuyData  = `'${ticker}','PE',${r.strike},'${peSym}','${expiry}','BUY'`;
+      const peSellData = `'${ticker}','PE',${r.strike},'${peSym}','${expiry}','SELL'`;
+
+      const ceBuyBtn  = `<button class="opt-buy-btn" onclick="openManualOptModal(${ceBuyData})">▲ BUY</button>`;
+      const ceSellBtn = `<button class="opt-sell-btn" onclick="openManualOptModal(${ceSellData})">▼ SELL</button>`;
+      const peBuyBtn  = `<button class="opt-buy-btn" onclick="openManualOptModal(${peBuyData})">▲ BUY</button>`;
+      const peSellBtn = `<button class="opt-sell-btn" onclick="openManualOptModal(${peSellData})">▼ SELL</button>`;
 
       return `
         <tr class="${rowCls}">
           <td>${ceOi}</td>
           <td>${ceVol}</td>
-          <td style="color:#86efac;font-weight:600;">${ceLtp}</td>
+          <td style="padding:4px 6px;">
+            <div style="color:#86efac;font-weight:700;font-size:13px;">${ceLtpDisp}</div>
+            <div style="display:flex;gap:3px;margin-top:3px;">${ceBuyBtn}${ceSellBtn}</div>
+          </td>
           <td class="th-strike">${strikeLabel}</td>
-          <td style="color:#fca5a5;font-weight:600;">${peLtp}</td>
+          <td style="padding:4px 6px;">
+            <div style="color:#fca5a5;font-weight:700;font-size:13px;">${peLtpDisp}</div>
+            <div style="display:flex;gap:3px;margin-top:3px;">${peBuyBtn}${peSellBtn}</div>
+          </td>
           <td>${peVol}</td>
           <td>${peOi}</td>
         </tr>
@@ -488,6 +523,128 @@ function loadOptionChain(ticker) {
       }
     })
     .catch(() => {});
+}
+
+/* ── Manual Option Order Panel ───────────────────────────────── */
+// Called from account pills render to populate account selector
+function _syncManualOptAccountSelector(accounts) {
+  window._accountList = accounts || [];
+  const sel = $('manualOptAccount');
+  if (!sel || !accounts) return;
+  sel.innerHTML = accounts.map(a =>
+    `<option value="${a.id}">${a.label || a.id}</option>`
+  ).join('');
+}
+
+// Refresh option chain live data
+function refreshOptionChainLive() {
+  const sym = (window._currentTicker || '').trim();
+  if (!sym) { alert('No ticker selected. Run analysis first.'); return; }
+  fetch(`/api/option_chain?ticker=${encodeURIComponent(sym)}&force=1`)
+    .then(r => r.json())
+    .then(d => { if (d.ok && d.option_chain) renderOptionChain(d.option_chain); })
+    .catch(() => {});
+}
+
+// Pending order state
+let _pendingManualOpt = null;
+
+function openManualOptModal(ticker, optType, strike, tradingsymbol, expiry, txnType) {
+  const lots    = parseInt($('manualOptLots')?.value || '1', 10);
+  const accId   = $('manualOptAccount')?.value || 'primary';
+  const accLabel = $('manualOptAccount')?.selectedOptions?.[0]?.text || accId;
+
+  // Determine lot size from chain data
+  let lotSize = 1;
+  const chain = window._lastOptionChainData;
+  if (chain && chain.lot_size) lotSize = chain.lot_size;
+  else if (chain && chain.rows && chain.rows.length) {
+    // try to find from first row
+    const r0 = chain.rows[0];
+    if (r0.ce && r0.ce.lot_size) lotSize = r0.ce.lot_size;
+    else if (r0.pe && r0.pe.lot_size) lotSize = r0.pe.lot_size;
+  }
+  const qty = lots * lotSize;
+
+  // Live LTP
+  let ltpStr = '—';
+  if (chain && chain.rows) {
+    const row = chain.rows.find(r => r.strike == strike);
+    if (row) {
+      const side = optType === 'CE' ? row.ce : row.pe;
+      if (side && side.ltp != null) ltpStr = `₹${Number(side.ltp).toFixed(2)}`;
+    }
+  }
+
+  _pendingManualOpt = { ticker, optType, strike, tradingsymbol, expiry, txnType, lots, lotSize, qty, accId };
+
+  const color = txnType === 'BUY' ? '#22c55e' : '#ef4444';
+  const icon  = txnType === 'BUY' ? '▲' : '▼';
+  const $title = $('manualOptModalTitle');
+  const $body  = $('manualOptModalBody');
+  const $confirmBtn = $('manualOptConfirmBtn');
+  if ($title) { $title.textContent = `${icon} ${txnType} ${optType} — ${strike}`; $title.style.color = color; }
+  if ($body) {
+    $body.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;">
+        <tr><td style="color:#64748b;padding:3px 0;">Symbol</td><td style="color:#f1f5f9;font-weight:700;">${tradingsymbol || `${ticker}${expiry}${strike}${optType}`}</td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Strike / Type</td><td style="color:#f1f5f9;font-weight:700;">₹${strike} ${optType}</td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Expiry</td><td style="color:#f1f5f9;">${expiry || '—'}</td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Live LTP</td><td style="color:#fbbf24;font-weight:700;">${ltpStr}</td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Lots × Lot Size</td><td style="color:#f1f5f9;">${lots} × ${lotSize} = <strong>${qty} qty</strong></td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Account</td><td style="color:#f1f5f9;">${accLabel}</td></tr>
+        <tr><td style="color:#64748b;padding:3px 0;">Order Type</td><td style="font-weight:800;color:${color};">${txnType} @ MARKET</td></tr>
+      </table>
+    `;
+  }
+  if ($confirmBtn) { $confirmBtn.style.background = color; }
+
+  const modal = $('manualOptModal');
+  if (modal) { modal.style.display = 'flex'; }
+}
+
+function closeManualOptModal() {
+  const modal = $('manualOptModal');
+  if (modal) modal.style.display = 'none';
+  _pendingManualOpt = null;
+}
+
+async function confirmManualOptOrder() {
+  if (!_pendingManualOpt) return;
+  const p = _pendingManualOpt;
+  const $btn = $('manualOptConfirmBtn');
+  if ($btn) { $btn.disabled = true; $btn.textContent = '⏳ Placing...'; }
+
+  try {
+    const payload = {
+      ticker:          p.ticker,
+      option_type:     p.optType,
+      strike:          p.strike,
+      tradingsymbol:   p.tradingsymbol,
+      expiry:          p.expiry,
+      transaction_type: p.txnType,
+      lots:            p.lots,
+      quantity:        p.qty,
+      account_id:      p.accId,
+    };
+    const res = await fetch('/api/option/manual_order', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    }).then(r => r.json());
+
+    closeManualOptModal();
+    if (res.ok) {
+      const orderInfo = res.result || {};
+      const dryTag = orderInfo.dry_run ? ' [DRY RUN]' : '';
+      alert(`✅ Order Placed${dryTag}\n${p.txnType} ${p.qty} × ${p.tradingsymbol || p.ticker + ' ' + p.strike + p.optType}\nOrder ID: ${res.order_id || orderInfo.order_id || 'N/A'}`);
+    } else {
+      alert(`❌ Order Failed\n${res.error || 'Unknown error'}`);
+    }
+  } catch (e) {
+    closeManualOptModal();
+    alert(`❌ Network Error\n${e.message}`);
+  }
 }
 
 function renderPositions(positions) {
@@ -3263,6 +3420,13 @@ async function refreshAccountsList() {
     if (d.ok && Array.isArray(d.accounts)) {
       window._kiteAccounts = d.accounts;
       renderAccountPills();
+      // Sync manual option order account selector
+      const loggedInAccs = d.accounts.filter(a => a.logged_in).map(a => ({
+        id: a.id, label: a.user_name || a.label || a.id
+      }));
+      _syncManualOptAccountSelector(loggedInAccs.length ? loggedInAccs : d.accounts.map(a => ({
+        id: a.id, label: a.user_name || a.label || a.id
+      })));
     }
   } catch (e) {}
 }
