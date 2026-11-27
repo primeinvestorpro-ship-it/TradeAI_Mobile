@@ -219,3 +219,31 @@ def test_closed_kite_positions_displayed():
     assert cp["exit_price"] == 55.0
     assert cp["pnl"] == 2400.0
     assert len(client.kite.orders_placed) == 0
+
+
+def test_day_total_pnl_uses_live_ltp_with_buy_sell_values():
+    client = MockKiteClient(dry_run=False)
+    settings = {"dry_run": False, "mtm_sl_enabled": False}
+    # Earlier closed loss on same contract (-27378.17), plus 455 open qty @ 185.971
+    # Kite positions().pnl is stale at 185.25 (based on stale last_price 246.55),
+    # while live quote LTP is 250.00.
+    client.kite.net_positions = [{
+        "tradingsymbol": "NIFTY26D0125800PE",
+        "exchange": "NFO",
+        "product": "MIS",
+        "quantity": 455,
+        "average_price": 185.97,
+        "last_price": 246.55,
+        "pnl": 185.25,
+        "buy_value": 229674.25,
+        "sell_value": 117679.25,
+        "multiplier": 1,
+    }]
+    client.kite.quotes = {"NFO:NIFTY26D0125800PE": {"last_price": 250.00}}
+    guardian = PositionGuardian(kite_client=client, settings_loader=lambda: settings, log=lambda m: None)
+    st = guardian.poll_once()
+
+    expected_open_mtm = round((250.00 - 185.97) * 455, 2)
+    expected_day_pnl = round((117679.25 - 229674.25) + (455 * 250.00), 2)
+    assert st["current_mtm"] == expected_open_mtm
+    assert st["day_total_pnl"] == expected_day_pnl

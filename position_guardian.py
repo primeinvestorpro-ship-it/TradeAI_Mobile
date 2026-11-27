@@ -288,13 +288,13 @@ class PositionGuardian:
             for p in net_list:
                 qty = int(p.get("quantity") or 0)
                 contract_pnl = float(p.get("pnl") or 0.0)
-                day_total_pnl += contract_pnl
                 sym = p.get("tradingsymbol", "")
                 exch = p.get("exchange", "NFO")
                 prod = p.get("product", "MIS")
                 live_q_ltp = live_quotes.get(f"{exch}:{sym}", {}).get("last_price")
 
                 if qty == 0:
+                    day_total_pnl += contract_pnl
                     buy_qty = int(p.get("buy_quantity") or 0)
                     sell_qty = int(p.get("sell_quantity") or 0)
                     if buy_qty > 0 or sell_qty > 0 or contract_pnl != 0.0:
@@ -331,6 +331,14 @@ class PositionGuardian:
                 avg = float(p.get("average_price") or (p.get("buy_price") if qty > 0 else p.get("sell_price")) or 0.0)
                 ltp = float(live_q_ltp or p.get("last_price") or avg or 0.0)
                 open_mtm = round((ltp - avg) * qty, 2) if avg > 0 else float(p.get("unrealised") or p.get("pnl") or 0.0)
+                multiplier = float(p.get("multiplier") or 1.0)
+                if p.get("buy_value") is not None and p.get("sell_value") is not None:
+                    live_contract_pnl = round((float(p.get("sell_value") or 0.0) - float(p.get("buy_value") or 0.0)) + (qty * ltp * multiplier), 2)
+                elif p.get("unrealised") is not None and avg > 0:
+                    live_contract_pnl = round(contract_pnl + (open_mtm - float(p.get("unrealised") or 0.0)), 2)
+                else:
+                    live_contract_pnl = round(open_mtm, 2) if avg > 0 and contract_pnl == 0.0 else contract_pnl
+                day_total_pnl += live_contract_pnl
                 entry_val = abs(qty) * avg
                 pnl_pct = round((open_mtm / entry_val) * 100.0, 2) if entry_val > 0 else 0.0
 
