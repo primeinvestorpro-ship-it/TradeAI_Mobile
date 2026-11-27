@@ -951,7 +951,9 @@ function loadSpotChart(symOverride) {
 
 /* ── Reports ─────────────────────────────────── */
 function loadReports() {
+  if (!reportsList) return;
   fetch('/api/reports').then(r => r.json()).then(d => {
+    if (!reportsList) return;
     if (!d.ok || !d.reports.length) {
       reportsList.innerHTML = '<p class="muted">No reports yet — run an analysis first.</p>';
       return;
@@ -962,22 +964,23 @@ function loadReports() {
         <span class="report-meta">${r.modified} · ${(r.size/1024).toFixed(1)} KB</span>
       </div>
     `).join('');
-  });
+  }).catch(() => {});
 }
 
 function openReport(filename, ticker) {
+  if (!reportViewer) return;
   fetch(`/api/reports/${encodeURIComponent(filename)}`)
     .then(r => r.text())
     .then(text => {
-      reportViewerTitle.textContent = `TRADE-ANALYSIS-${ticker}.md`;
-      reportViewerContent.textContent = text;
+      if (reportViewerTitle) reportViewerTitle.textContent = `TRADE-ANALYSIS-${ticker}.md`;
+      if (reportViewerContent) reportViewerContent.textContent = text;
       reportViewer.classList.remove('hidden');
       reportViewer.scrollIntoView({behavior: 'smooth'});
     });
 }
 
-btnCloseReport.addEventListener('click', () => reportViewer.classList.add('hidden'));
-btnRefreshRpts.addEventListener('click', loadReports);
+if (btnCloseReport) btnCloseReport.addEventListener('click', () => reportViewer && reportViewer.classList.add('hidden'));
+if (btnRefreshRpts) btnRefreshRpts.addEventListener('click', loadReports);
 
 /* ═══════════════════════════════════════════════
    DUAL SCANNER — UI Logic
@@ -3135,10 +3138,84 @@ function renderGuardianState(st) {
       `<span style="background:#f8fafc;border:1px solid #e2e8f0;padding:2px 8px;border-radius:4px;"><strong>[${ev.time}]</strong> ${ev.message}</span>`
     ).join('');
   }
+
+  // Render Individual Per-Account MTM & SL Cards
+  const cardsEl = $('guardianPerAccountCards');
+  const accList = st.accounts || window._kiteAccounts || [];
+  if (cardsEl && Array.isArray(accList)) {
+    const loggedMap = {};
+    (st.accounts || []).forEach(a => { loggedMap[a.account_id] = a; });
+    const cfgAccs = (window._kiteAccounts && window._kiteAccounts.length > 0) ? window._kiteAccounts : (st.accounts || []);
+    cardsEl.innerHTML = cfgAccs.map(a => {
+      const aid = a.id || a.account_id;
+      const live = loggedMap[aid] || a;
+      const isLogged = !!live.logged_in;
+      const isSel = currentGuardianAccountId === aid;
+      const m = Number(live.current_mtm || 0);
+      const dPnl = Number(live.day_total_pnl || 0);
+      const pk = Number(live.peak_mtm || 0);
+      const lCfg = live.config || a;
+      let slStr = 'SL OFF';
+      let slCol = '#64748b';
+      if (live.trailing_active && live.trailing_sl_level != null) {
+        const tsl = Number(live.trailing_sl_level);
+        slStr = `TRAIL ${tsl >= 0 ? '+' : ''}₹${tsl.toFixed(0)}`;
+        slCol = '#0284c7';
+      } else if (lCfg.mtm_sl_enabled !== false) {
+        slStr = `-₹${Number(lCfg.max_loss || 2500).toFixed(0)}`;
+        slCol = '#dc2626';
+      }
+      const mCol = m > 0 ? '#059669' : (m < 0 ? '#dc2626' : '#0f172a');
+      const dCol = dPnl > 0 ? '#059669' : (dPnl < 0 ? '#dc2626' : '#0f172a');
+      const borderCol = isSel ? '#0284c7' : '#e2e8f0';
+      const bgCol = isSel ? '#f0f9ff' : '#ffffff';
+      return `<div onclick="selectGuardianAccount('${aid}')" style="cursor:pointer;padding:10px 12px;border-radius:8px;border:2px solid ${borderCol};background:${bgCol};display:flex;flex-direction:column;gap:6px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+          <strong style="font-size:12px;color:#0f172a;">${isLogged ? '🟢' : '⚪'} ${live.user_name || a.label || aid}</strong>
+          <div style="display:flex;align-items:center;gap:4px;">
+            <span class="badge ${a.dry_run ? 'badge-neutral' : 'badge-success'}" style="font-size:9px;">${a.dry_run ? 'SIM' : 'LIVE'}</span>
+            ${isLogged ? `<button type="button" class="btn btn-danger btn-sm" onclick="event.stopPropagation(); guardianExitAccount('${aid}')" style="padding:1px 6px;font-size:10px;font-weight:700;">Exit All</button>` : ''}
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:11px;">
+          <div><div style="font-size:9px;color:#64748b;font-weight:700;">OPEN MTM</div><strong style="color:${mCol};">${m >= 0 ? '+' : ''}₹${m.toFixed(0)}</strong></div>
+          <div><div style="font-size:9px;color:#64748b;font-weight:700;">DAY P&amp;L</div><strong style="color:${dCol};">${dPnl >= 0 ? '+' : ''}₹${dPnl.toFixed(0)}</strong></div>
+          <div><div style="font-size:9px;color:#64748b;font-weight:700;">PEAK</div><strong style="color:#059669;">₹${pk.toFixed(0)}</strong></div>
+          <div><div style="font-size:9px;color:#64748b;font-weight:700;">ACTIVE SL</div><strong style="color:${slCol};">${slStr}</strong></div>
+        </div>
+      </div>`;
+    }).join('');
+  }
 }
 
 let currentGuardianAccountId = 'all';
+let _lastSyncedSlAccountId = null;
 window._kiteAccounts = [];
+
+function syncGuardianInputsFromState(st) {
+  const targetAccId = currentGuardianAccountId === 'all' ? 'primary' : currentGuardianAccountId;
+  const accObj = (st && st.accounts || []).find(a => a.account_id === targetAccId)
+              || (window._kiteAccounts || []).find(a => a.id === targetAccId);
+  const cfg = (accObj && accObj.config) || accObj || (st && st.config) || {};
+  const lblEl = $('gdEditingAccountLabel');
+  if (lblEl) {
+    lblEl.textContent = `SL Rules: ${(accObj && (accObj.user_name || accObj.label)) || targetAccId}`;
+  }
+  const activeId = document.activeElement ? document.activeElement.id : '';
+  const slIds = ['gdMaxLoss', 'gdTrailAct', 'gdTrailGap', 'gdPerPosPct', 'gdTargetProfit'];
+  if (slIds.includes(activeId) && _lastSyncedSlAccountId === targetAccId) return;
+  _lastSyncedSlAccountId = targetAccId;
+
+  if ($('gdMtmSlEnabled') && cfg.mtm_sl_enabled !== undefined) $('gdMtmSlEnabled').checked = !!cfg.mtm_sl_enabled;
+  if ($('gdMaxLoss') && cfg.max_loss !== undefined) $('gdMaxLoss').value = cfg.max_loss;
+  if ($('gdTrailEnabled') && cfg.trailing_sl_enabled !== undefined) $('gdTrailEnabled').checked = !!cfg.trailing_sl_enabled;
+  if ($('gdTrailAct') && cfg.trailing_activation !== undefined) $('gdTrailAct').value = cfg.trailing_activation;
+  if ($('gdTrailGap') && cfg.trailing_gap !== undefined) $('gdTrailGap').value = cfg.trailing_gap;
+  if ($('gdPerPosEnabled') && cfg.per_pos_sl_enabled !== undefined) $('gdPerPosEnabled').checked = !!cfg.per_pos_sl_enabled;
+  if ($('gdPerPosPct') && cfg.per_pos_sl_pct !== undefined) $('gdPerPosPct').value = cfg.per_pos_sl_pct;
+  if ($('gdTargetEnabled') && cfg.target_enabled !== undefined) $('gdTargetEnabled').checked = !!cfg.target_enabled;
+  if ($('gdTargetProfit') && cfg.target_profit !== undefined) $('gdTargetProfit').value = cfg.target_profit;
+}
 
 function renderAccountPills() {
   const pillsEl = $('guardianAccountPills');
@@ -3169,6 +3246,7 @@ function renderAccountPills() {
 
 window.selectGuardianAccount = function(accId) {
   currentGuardianAccountId = accId || 'all';
+  _lastSyncedSlAccountId = null;
   renderAccountPills();
   refreshGuardianStatus();
 };
@@ -3240,15 +3318,16 @@ window.loginKiteAccount = async function(accId) {
     const d = await res.json();
     if (d.ok && d.login_url) {
       window.open(d.login_url, '_blank');
-      addLog(`[auth] Opened Kite login for [${accId}]...`, 'info');
+      addLog(`[auth] Opened Kite login for [${accId}]. Tip: if Chrome is already logged into another Zerodha user, open in Incognito or paste the redirect URL via "Token".`, 'info');
     } else {
+      window.alert(`Login error for ${accId}: ${d.error || 'Unknown error'}`);
       addLog(`[auth] Login error for [${accId}]: ${d.error || 'Unknown error'}`, 'error');
     }
   } catch (e) {}
 };
 
 window.manualLoginKiteAccount = async function(accId) {
-  const raw = window.prompt(`Paste Kite redirect URL or request_token for [${accId}]:`);
+  const raw = window.prompt(`Paste Kite redirect URL, request_token, or access_token for [${accId}]:`);
   if (!raw) return;
   try {
     const res = await fetch('/api/login/manual', {
@@ -3262,7 +3341,23 @@ window.manualLoginKiteAccount = async function(accId) {
       refreshAccountsList();
       refreshGuardianStatus();
     } else {
+      window.alert(`Token login failed for ${accId}:\n${d.error}`);
       addLog(`✗ [${accId}] manual login failed: ${d.error}`, 'error');
+    }
+  } catch (e) {}
+};
+
+window.guardianExitAccount = async function(accId) {
+  try {
+    const res = await fetch('/api/guardian/exit_all', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_id: accId }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      addLog(`[guardian] 🚨 Squared off ${d.exited || 0} position(s) for [${accId}]`, 'warn');
+      refreshGuardianStatus();
     }
   } catch (e) {}
 };
@@ -3284,7 +3379,10 @@ async function refreshGuardianStatus() {
   try {
     const res = await fetch(`/api/guardian/status?account_id=${encodeURIComponent(currentGuardianAccountId)}`);
     const d = await res.json();
-    if (d.ok) renderGuardianState(d);
+    if (d.ok) {
+      renderGuardianState(d);
+      syncGuardianInputsFromState(d);
+    }
   } catch (e) {}
 }
 window.refreshGuardianStatus = refreshGuardianStatus;

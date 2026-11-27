@@ -601,7 +601,16 @@ def login_manual():
     log = _make_log()
     try:
         client = KiteClient(acc_settings, log=log, account_id=acc_id)
-        client.complete_login(request_token)
+        try:
+            client.complete_login(request_token)
+        except Exception as exc_req:
+            # Fallback: if user pasted a live access_token directly instead of request_token
+            try:
+                client.kite.set_access_token(request_token)
+                client.kite.profile()
+                client._save_token(request_token)
+            except Exception:
+                raise exc_req
         try:
             prof = client.kite.profile()
             client._user_name = prof.get("user_name") or prof.get("user_id") or "Kite User"
@@ -617,9 +626,10 @@ def login_manual():
         log(f"[app] manual login successful for [{acc_id}] {client._user_name} (token {request_token[:8]}...)")
         return jsonify({"ok": True, "account_id": acc_id, "user_name": client._user_name, "message": f"Connected [{acc_id}] as {client._user_name}!"})
     except Exception as exc:  # noqa: BLE001
+        print(f"[app] manual login failed for [{acc_id}]: {exc!r}")
         log(f"[app] manual login failed for [{acc_id}]: {exc!r}")
         socketio.emit("login_status", {"status": "error", "message": str(exc), "source": "manual", "account_id": acc_id})
-        return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": False, "error": f"{exc} (Check API Key/Secret for {acc_id} & ensure token is fresh/unused)"}), 400
 
 
 # ---------------------------------------------------------------------------
