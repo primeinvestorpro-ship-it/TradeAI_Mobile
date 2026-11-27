@@ -247,3 +247,50 @@ def test_day_total_pnl_uses_live_ltp_with_buy_sell_values():
     expected_day_pnl = round((117679.25 - 229674.25) + (455 * 250.00), 2)
     assert st["current_mtm"] == expected_open_mtm
     assert st["day_total_pnl"] == expected_day_pnl
+
+
+def test_reentry_fifo_open_entry_price_ignores_prior_closed_trades():
+    client = MockKiteClient(dry_run=False)
+    settings = {
+        "dry_run": False,
+        "mtm_sl_enabled": True,
+        "max_loss": 8000.0,
+        "trailing_sl_enabled": True,
+        "trailing_activation": 5000.0,
+        "trailing_gap": 5000.0,
+        "per_pos_sl_enabled": True,
+        "per_pos_sl_pct": 50.0,
+    }
+    # Earlier closed trades lost 4956.25; current open 455 qty bought @ 235.25.
+    # Kite net_positions reports all-day weighted average_price = 185.97!
+    client.kite.net_positions = [{
+        "tradingsymbol": "NIFTY26D0125800PE",
+        "exchange": "NFO",
+        "product": "MIS",
+        "quantity": 455,
+        "buy_quantity": 1235,
+        "sell_quantity": 780,
+        "average_price": 185.97,
+        "last_price": 235.20,
+        "pnl": -4979.00,
+        "buy_value": 229674.25,
+        "sell_value": 117679.25,
+        "multiplier": 1,
+    }]
+    client.kite.quotes = {"NFO:NIFTY26D0125800PE": {"last_price": 235.20}}
+    client.kite.trades = lambda: [
+        {"tradingsymbol": "NIFTY26D0125800PE", "transaction_type": "BUY", "quantity": 260, "average_price": 165.275, "fill_timestamp": "2026-11-27 09:28:37"},
+        {"tradingsymbol": "NIFTY26D0125800PE", "transaction_type": "SELL", "quantity": 260, "average_price": 152.825, "fill_timestamp": "2026-11-27 09:33:14"},
+        {"tradingsymbol": "NIFTY26D0125800PE", "transaction_type": "BUY", "quantity": 520, "average_price": 153.20, "fill_timestamp": "2026-11-27 09:55:24"},
+        {"tradingsymbol": "NIFTY26D0125800PE", "transaction_type": "SELL", "quantity": 520, "average_price": 149.89375, "fill_timestamp": "2026-11-27 09:57:56"},
+        {"tradingsymbol": "NIFTY26D0125800PE", "transaction_type": "BUY", "quantity": 455, "average_price": 235.25, "fill_timestamp": "2026-11-27 13:56:12"},
+    ]
+    guardian = PositionGuardian(kite_client=client, settings_loader=lambda: settings, log=lambda m: None)
+    st = guardian.poll_once()
+
+    pos = st["positions"][0]
+    assert pos["average_price"] == 235.25
+    assert pos["pnl"] == round((235.20 - 235.25) * 455, 2)  # -22.75, NOT +22,399!
+    assert st["current_mtm"] == -22.75
+    assert st["trailing_active"] is False  # Must NOT falsely trigger trailing SL!
+    assert pos["sl_price"] == round(235.25 * 0.5, 2)

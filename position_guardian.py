@@ -36,6 +36,44 @@ DEFAULT_GUARDIAN_CONFIG: Dict[str, Any] = {
 }
 
 
+def _compute_fifo_open_entry(trades: List[Dict[str, Any]], tradingsymbol: str, net_qty: int) -> Optional[float]:
+    """
+    Replays chronological Kite trades for `tradingsymbol` using FIFO to compute
+    the true average entry price of the currently open `net_qty`.
+    """
+    if not trades or net_qty == 0:
+        return None
+    sym_trades = [t for t in trades if t.get("tradingsymbol") == tradingsymbol and int(t.get("quantity") or 0) > 0]
+    if not sym_trades:
+        return None
+    sym_trades.sort(key=lambda t: str(t.get("fill_timestamp") or t.get("order_timestamp") or ""))
+
+    open_lots: List[List[float]] = []
+    for t in sym_trades:
+        q = int(t.get("quantity") or 0)
+        px = float(t.get("average_price") or t.get("price") or 0.0)
+        ttype = str(t.get("transaction_type") or "").upper()
+        signed_q = q if ttype == "BUY" else -q
+
+        while signed_q != 0 and open_lots and (open_lots[0][0] * signed_q < 0):
+            lot_q, _ = open_lots[0]
+            if abs(lot_q) <= abs(signed_q):
+                signed_q += int(lot_q)
+                open_lots.pop(0)
+            else:
+                open_lots[0][0] = lot_q + signed_q
+                signed_q = 0
+
+        if signed_q != 0:
+            open_lots.append([float(signed_q), px])
+
+    total_q = sum(lot[0] for lot in open_lots)
+    if int(round(total_q)) != int(net_qty) or total_q == 0:
+        return None
+    total_cost = sum(abs(lot[0]) * lot[1] for lot in open_lots)
+    return round(total_cost / abs(total_q), 4)
+
+
 class PositionGuardian:
     """Background guardian that continuously monitors Kite & simulated positions."""
 
@@ -78,6 +116,7 @@ class PositionGuardian:
         self._last_poll_ts: Optional[str] = None
         self._last_error: Optional[str] = None
         self._history_events: List[Dict[str, Any]] = []
+        self._fifo_entry_cache: Dict[tuple, float] = {}
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -285,6 +324,8 @@ class PositionGuardian:
                 except Exception:
                     live_quotes = {}
 
+            cached_trades: Optional[List[Dict[str, Any]]] = None
+
             for p in net_list:
                 qty = int(p.get("quantity") or 0)
                 contract_pnl = float(p.get("pnl") or 0.0)
@@ -329,6 +370,28 @@ class PositionGuardian:
                     continue
 
                 avg = float(p.get("average_price") or (p.get("buy_price") if qty > 0 else p.get("sell_price")) or 0.0)
+                # When a contract has prior closed trades today (e.g. re-entry), Kite's
+                # average_price is an all-day weighted average. Resolve the true FIFO
+                # entry price of the currently open `qty` from kite.trades() (cached per fill count).
+                buy_q = int(p.get("buy_quantity") or 0)
+                sell_q = int(p.get("sell_quantity") or 0)
+                has_prior_closed = (qty > 0 and sell_q > 0) or (qty < 0 and buy_q > 0)
+                if has_prior_closed:
+                    cache_key = (exch, sym, prod, qty, buy_q, sell_q)
+                    if cache_key in self._fifo_entry_cache:
+                        avg = self._fifo_entry_cache[cache_key]
+                    else:
+                        if cached_trades is None and hasattr(self.kite_client.kite, "trades"):
+                            try:
+                                cached_trades = self.kite_client.kite.trades() or []
+                            except Exception:
+                                cached_trades = []
+                        if cached_trades:
+                            fifo_avg = _compute_fifo_open_entry(cached_trades, sym, qty)
+                            if fifo_avg is not None and fifo_avg > 0:
+                                avg = fifo_avg
+                                self._fifo_entry_cache[cache_key] = fifo_avg
+
                 ltp = float(live_q_ltp or p.get("last_price") or avg or 0.0)
                 open_mtm = round((ltp - avg) * qty, 2) if avg > 0 else float(p.get("unrealised") or p.get("pnl") or 0.0)
                 multiplier = float(p.get("multiplier") or 1.0)
