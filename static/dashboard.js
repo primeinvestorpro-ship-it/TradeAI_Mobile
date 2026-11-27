@@ -3218,10 +3218,14 @@ function syncGuardianInputsFromState(st) {
   if ($('gdTargetProfit') && cfg.target_profit !== undefined) $('gdTargetProfit').value = cfg.target_profit;
 }
 
+let _lastAccountPillsSig = '';
 function renderAccountPills() {
   const pillsEl = $('guardianAccountPills');
   if (!pillsEl) return;
   const accs = window._kiteAccounts || [];
+  const sig = currentGuardianAccountId + '|' + accs.map(a => `${a.id}:${a.logged_in}:${Math.round(a.current_mtm || 0)}:${a.user_name || a.label}`).join(',');
+  if (sig === _lastAccountPillsSig) return;
+  _lastAccountPillsSig = sig;
   const allCls = currentGuardianAccountId === 'all' ? 'btn-primary' : 'btn-secondary';
   let html = `<button type="button" class="btn btn-sm ${allCls}" onclick="selectGuardianAccount('all')" style="font-size:11px;padding:3px 10px;font-weight:700;">All Accounts (Combined)</button>`;
 
