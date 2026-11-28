@@ -7,7 +7,15 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css?v=2.9" />
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('tradeai_theme') || 'violet';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/style.css?v=3.0" />
 </head>
 <body>
   <!-- Top bar -->
@@ -54,9 +62,47 @@
           <span class="argon-bell-icon">🔔</span>
           <span class="argon-bell-dot"></span>
         </div>
-        <div class="argon-avatar-wrap">
-          <img class="argon-avatar-img" src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80" alt="Trader Avatar" />
-          <span class="argon-avatar-name" id="userAvatarName">{{ user_name or 'Kite Trader' }}</span>
+        <div class="profile-menu-wrap" id="profileMenuWrap">
+          <div class="argon-avatar-wrap" id="btnProfileMenu" title="Profile & Themes">
+            <img class="argon-avatar-img" src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=80&q=80" alt="Trader Avatar" />
+            <span class="argon-avatar-name" id="userAvatarName">{{ user_name or 'Kite Trader' }}</span>
+            <span class="profile-caret">▾</span>
+          </div>
+          <div class="profile-dropdown hidden" id="profileThemeMenu">
+            <div class="profile-dropdown-header">
+              <div class="profile-dropdown-title" id="profileMenuUser">{{ user_name or 'Kite Trader' }}</div>
+              <div class="profile-dropdown-sub">Dashboard Appearance</div>
+            </div>
+            <div class="profile-theme-section">
+              <div class="profile-theme-label">Market Themes</div>
+              <div class="theme-grid">
+                <button type="button" class="theme-swatch-btn" data-theme-id="violet" onclick="setDashboardTheme('violet')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#8b5cf6,#facc15);"></span>
+                  <span class="theme-name">Violet Night</span>
+                </button>
+                <button type="button" class="theme-swatch-btn" data-theme-id="bull-green" onclick="setDashboardTheme('bull-green')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#10b981,#34d399);"></span>
+                  <span class="theme-name">Bull Run (Green)</span>
+                </button>
+                <button type="button" class="theme-swatch-btn" data-theme-id="bear-red" onclick="setDashboardTheme('bear-red')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#f43f5e,#fb7185);"></span>
+                  <span class="theme-name">Bear Market (Red)</span>
+                </button>
+                <button type="button" class="theme-swatch-btn" data-theme-id="gold-terminal" onclick="setDashboardTheme('gold-terminal')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#f59e0b,#fde047);"></span>
+                  <span class="theme-name">Wall St. Gold</span>
+                </button>
+                <button type="button" class="theme-swatch-btn" data-theme-id="ocean-blue" onclick="setDashboardTheme('ocean-blue')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#0ea5e9,#38bdf8);"></span>
+                  <span class="theme-name">Midnight Ocean</span>
+                </button>
+                <button type="button" class="theme-swatch-btn" data-theme-id="light-argon" onclick="setDashboardTheme('light-argon')">
+                  <span class="theme-dot" style="background:linear-gradient(135deg,#5e72e4,#11cdef);"></span>
+                  <span class="theme-name">Daylight Classic</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -1483,6 +1529,6 @@
   </script>
   <script src="/static/socket.io.min.js"></script>
   <script src="/static/lightweight-charts.standalone.production.js"></script>
-  <script src="/static/dashboard.js?v=4.2"></script>
+  <script src="/static/dashboard.js?v=4.3"></script>
 </body>
 </html>

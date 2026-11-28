@@ -3652,3 +3652,44 @@ setInterval(refreshAccountsList, 5000);
 setTimeout(refreshAccountsList, 600);
 setInterval(refreshGuardianStatus, 2500);
 setTimeout(refreshGuardianStatus, 800);
+
+
+// ── Profile Menu & Stock Theme Switcher ──────────────────────────────────────
+(function initDashboardThemes() {
+  const THEME_KEY = 'tradeai_theme';
+
+  function applyTheme(themeId) {
+    const id = themeId || 'violet';
+    document.documentElement.setAttribute('data-theme', id);
+    try { localStorage.setItem(THEME_KEY, id); } catch (e) {}
+    document.querySelectorAll('.theme-swatch-btn').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.themeId === id);
+    });
+  }
+
+  window.setDashboardTheme = function(themeId) {
+    applyTheme(themeId);
+  };
+
+  const saved = (function () {
+    try { return localStorage.getItem(THEME_KEY) || 'violet'; } catch (e) { return 'violet'; }
+  })();
+  applyTheme(saved);
+
+  const btnProfile = $('btnProfileMenu');
+  const menu = $('profileThemeMenu');
+  if (btnProfile && menu) {
+    btnProfile.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.classList.toggle('hidden');
+      const uEl = $('userAvatarName');
+      const mEl = $('profileMenuUser');
+      if (uEl && mEl) mEl.textContent = uEl.textContent;
+    });
+    document.addEventListener('click', (e) => {
+      if (!menu.classList.contains('hidden') && !e.target.closest('#profileMenuWrap')) {
+        menu.classList.add('hidden');
+      }
+    });
+  }
+})();
