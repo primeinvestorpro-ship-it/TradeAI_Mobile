@@ -15,63 +15,65 @@
 
 :root {
   /* Fonts */
-  --font-main: 'Open Sans', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-main: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   
-  /* Argon Color Palette */
-  --argon-primary:         #5e72e4;
-  --argon-primary-hover:   #485ec4;
-  --argon-secondary:       #f7fafc;
-  --argon-info:            #11cdef;
-  --argon-success:         #2dce89;
-  --argon-danger:          #f5365c;
-  --argon-warning:         #fb6340;
-  --argon-dark:            #172b4d;
-  --argon-darker:          #0f172a;
-  --argon-light:           #f8f9fe;
-  --argon-muted:           #8898aa;
-  --argon-text:            #32325d;
-  --argon-text-dark:       #172b4d;
-  --argon-border:          #e9ecef;
-  --argon-border-dark:     #2b3553;
-  --argon-card-bg:         #ffffff;
-  --argon-card-dark:       #172b4d;
+  /* Neemo Dark Violet & Indigo Color Palette */
+  --argon-primary:         #8b5cf6;
+  --argon-primary-hover:   #7c3aed;
+  --argon-secondary:       #231c38;
+  --argon-info:            #a78bfa;
+  --argon-success:         #10b981;
+  --argon-danger:          #f43f5e;
+  --argon-warning:         #facc15;
+  --argon-dark:            #181326;
+  --argon-darker:          #0f0b1a;
+  --argon-light:           #0f0b1a;
+  --argon-muted:           #9892b0;
+  --argon-text:            #f3f1fa;
+  --argon-text-dark:       #ffffff;
+  --argon-border:          #2c2345;
+  --argon-border-dark:     #3b2f5c;
+  --argon-card-bg:         #181326;
+  --argon-card-dark:       #120e1e;
   
-  /* Argon Gradients */
-  --argon-hero-gradient:   linear-gradient(87deg, #11cdef 0, #1171ef 100%);
-  --argon-grad-primary:    linear-gradient(87deg, #5e72e4 0, #825ee4 100%);
-  --argon-grad-success:    linear-gradient(87deg, #2dce89 0, #2dcecc 100%);
-  --argon-grad-danger:     linear-gradient(87deg, #f5365c 0, #f56036 100%);
-  --argon-grad-warning:    linear-gradient(87deg, #fb6340 0, #fbb140 100%);
-  --argon-grad-info:       linear-gradient(87deg, #11cdef 0, #1171ef 100%);
-  --argon-grad-dark:       linear-gradient(87deg, #172b4d 0, #1a1e34 100%);
+  /* Neemo Violet Gradients */
+  --argon-hero-gradient:   linear-gradient(135deg, #161026 0%, #1d1534 60%, #261947 100%);
+  --argon-grad-primary:    linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%);
+  --argon-grad-success:    linear-gradient(135deg, #10b981 0%, #059669 100%);
+  --argon-grad-danger:     linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+  --argon-grad-warning:    linear-gradient(135deg, #facc15 0%, #eab308 100%);
+  --argon-grad-info:       linear-gradient(135deg, #8b5cf6 0%, #a855f7 100%);
+  --argon-grad-dark:       linear-gradient(135deg, #181326 0%, #110d1c 100%);
 
   /* Elevations & Radii */
-  --argon-shadow:          0 0 2rem 0 rgba(136, 152, 170, .15);
-  --argon-shadow-sm:       0 2px 4px rgba(50, 50, 93, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
-  --argon-shadow-btn:      0 4px 6px rgba(50, 50, 93, .11), 0 1px 3px rgba(0, 0, 0, .08);
-  --argon-radius:          12px;
+  --argon-shadow:          0 12px 32px rgba(5, 3, 12, 0.45);
+  --argon-shadow-sm:       0 4px 12px rgba(5, 3, 12, 0.35);
+  --argon-shadow-btn:      0 4px 14px rgba(124, 58, 237, 0.35);
+  --argon-radius:          14px;
   --argon-radius-pill:     50px;
 
   /* Backward Compatibility Variables */
-  --bg:        #f8f9fe;
-  --bg2:       #ffffff;
-  --bg3:       #f1f5f9;
-  --border:    #e2e8f0;
-  --text:      #32325d;
-  --muted:     #8898aa;
-  --accent:    #5e72e4;
-  --accent2:   #11cdef;
-  --green:     #2dce89;
-  --red:       #f5365c;
-  --orange:    #fb6340;
-  --blue:      #11cdef;
-  --radius:    12px;
-  --shadow:    0 0 2rem 0 rgba(136, 152, 170, .15);
+  --bg:        #0f0b1a;
+  --bg2:       #181326;
+  --bg3:       #231c38;
+  --border:    #2c2345;
+  --text:      #f3f1fa;
+  --muted:     #9892b0;
+  --accent:    #8b5cf6;
+  --accent2:   #facc15;
+  --green:     #10b981;
+  --red:       #f43f5e;
+  --orange:    #f97316;
+  --blue:      #a78bfa;
+  --radius:    14px;
+  --shadow:    0 12px 32px rgba(5, 3, 12, 0.45);
 }
 
 body {
   font-family: var(--font-main);
-  background: var(--argon-light);
+  background: radial-gradient(circle at 18% 12%, rgba(124, 58, 237, 0.16) 0%, transparent 45%),
+              radial-gradient(circle at 85% 80%, rgba(109, 40, 217, 0.14) 0%, transparent 45%),
+              #0f0b1a;
   color: var(--argon-text);
   min-height: 100vh;
   font-size: 14px;
@@ -1784,4 +1786,180 @@ tbody tr:hover {
 .gti-filter-paused {
   color: #dc2626;
   font-weight: 600;
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Neemo Dark Violet & Indigo Theme Overrides
+   Matches reference palette: #0f0b1a base, #181326 cards, #231c38 inputs/pills,
+   #8b5cf6 / #7c3aed violet accents, #facc15 yellow, #10b981 emerald, #f43f5e rose
+   ───────────────────────────────────────────────────────────────────────────── */
+.argon-header {
+  border-bottom: 1px solid rgba(139, 92, 246, 0.22);
+  box-shadow: 0 8px 28px rgba(5, 3, 12, 0.55);
+}
+
+.argon-search-pill {
+  background: #231c38;
+  border: 1px solid rgba(139, 92, 246, 0.28);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.argon-search-pill input {
+  color: #f3f1fa;
+}
+
+.argon-search-pill input::placeholder {
+  color: #8e88a6;
+}
+
+.ticker-dropdown {
+  background: #1d1730;
+  border: 1px solid #332952;
+  box-shadow: 0 16px 36px rgba(5, 3, 12, 0.7);
+}
+
+.ticker-dropdown-item {
+  border-bottom-color: #2a2142;
+}
+
+.ticker-dropdown-item:hover,
+.ticker-dropdown-item.active {
+  background: #282040;
+}
+
+.btn-argon-white {
+  background: #231c38;
+  color: #e9d5ff;
+  border: 1px solid rgba(139, 92, 246, 0.35);
+}
+
+.btn-argon-white:hover {
+  background: #2e2548;
+  color: #ffffff;
+}
+
+.mode-live {
+  background: rgba(244, 63, 94, 0.16);
+  color: #fda4af;
+  border: 1px solid rgba(244, 63, 94, 0.4);
+}
+
+.card,
+.gti-panel,
+.modal-card,
+.modal-content {
+  background: #181326 !important;
+  border-color: #2c2345 !important;
+  color: #f3f1fa !important;
+  box-shadow: 0 10px 28px rgba(5, 3, 12, 0.45) !important;
+}
+
+.card-title,
+h1, h2, h3, h4,
+.modal-title {
+  color: #ffffff !important;
+}
+
+.card-hint,
+.muted,
+.f-setup-status {
+  color: #9892b0 !important;
+}
+
+input,
+select,
+textarea,
+.form-control,
+.form-select {
+  background: #231c38 !important;
+  color: #f3f1fa !important;
+  border-color: #352b54 !important;
+  font-family: var(--font-main) !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #8b5cf6 !important;
+  box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.25) !important;
+  outline: none;
+}
+
+table,
+.table-container table {
+  color: #f3f1fa !important;
+}
+
+thead th,
+th {
+  background: #1f1932 !important;
+  color: #a79fc4 !important;
+  border-bottom: 1px solid #2c2345 !important;
+}
+
+tbody td,
+td {
+  border-bottom: 1px solid #261e3d !important;
+}
+
+tbody tr:hover {
+  background: rgba(139, 92, 246, 0.08) !important;
+}
+
+.badge-secondary,
+.badge-neutral {
+  background: #282040 !important;
+  color: #c4bfe0 !important;
+  border: 1px solid #382d59 !important;
+}
+
+.f-signal-hero {
+  background: #211a36 !important;
+  border-color: #322752 !important;
+}
+
+.f-signal-badge-wait,
+.f-badge-neutral,
+.gti-conf-low {
+  background: #282040 !important;
+  color: #c4bfe0 !important;
+  border-color: #3b2f5c !important;
+}
+
+/* Adapt inline light surfaces inside Guardian, Manual Options & Modals */
+[style*="background:#ffffff"],
+[style*="background: #ffffff"],
+[style*="background:#fff"],
+[style*="background: #fff"],
+[style*="background:#f8fafc"],
+[style*="background: #f8fafc"],
+[style*="background:#f8f9fe"],
+[style*="background: #f8f9fe"],
+[style*="background:#f1f5f9"],
+[style*="background: #f1f5f9"] {
+  background: #1d1730 !important;
+  border-color: #2f254a !important;
+}
+
+[style*="background:#f0f9ff"],
+[style*="background: #f0f9ff"] {
+  background: rgba(124, 58, 237, 0.14) !important;
+  border-color: #8b5cf6 !important;
+}
+
+[style*="color:#0f172a"],
+[style*="color: #0f172a"],
+[style*="color:#1e293b"],
+[style*="color: #1e293b"],
+[style*="color:#334155"],
+[style*="color: #334155"] {
+  color: #f3f1fa !important;
+}
+
+[style*="color:#64748b"],
+[style*="color: #64748b"],
+[style*="color:#475569"],
+[style*="color: #475569"] {
+  color: #9892b0 !important;
 }
